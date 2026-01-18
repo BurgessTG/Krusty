@@ -14,22 +14,17 @@ A terminal-based AI coding assistant powered by Claude.
 
 ## Installation
 
-### Homebrew (macOS/Linux)
-
-```bash
-brew install BurgessTG/tap/krusty
-```
-
-### Cargo (from crates.io)
-
-```bash
-cargo install krusty
-```
-
-### Shell Script (Linux/macOS)
+### Quick Install (Linux/macOS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BurgessTG/Krusty/main/install.sh | sh
+```
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap BurgessTG/tap
+brew install krusty
 ```
 
 ### From Source
@@ -43,7 +38,10 @@ cargo build --release
 
 ### GitHub Releases
 
-Download prebuilt binaries from [Releases](https://github.com/BurgessTG/Krusty/releases).
+Download prebuilt binaries for your platform from [Releases](https://github.com/BurgessTG/Krusty/releases):
+- Linux (x86_64, ARM64)
+- macOS (Intel, Apple Silicon)
+- Windows (x86_64)
 
 ### Requirements
 
