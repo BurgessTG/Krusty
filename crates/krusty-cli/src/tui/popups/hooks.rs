@@ -17,9 +17,10 @@ use crate::tui::themes::Theme;
 use crate::tui::utils::truncate_ellipsis;
 
 /// Stages of the hooks configuration wizard
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum HooksStage {
     /// List existing hooks with toggle/delete options
+    #[default]
     List,
     /// Select hook type (PreToolUse, PostToolUse, etc.)
     SelectType { selected_index: usize },
@@ -40,12 +41,6 @@ pub enum HooksStage {
         tool_pattern: String,
         command: String,
     },
-}
-
-impl Default for HooksStage {
-    fn default() -> Self {
-        Self::List
-    }
 }
 
 /// Hooks configuration popup

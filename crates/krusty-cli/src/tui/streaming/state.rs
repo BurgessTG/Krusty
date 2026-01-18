@@ -21,9 +21,10 @@ pub struct ThinkingBlock {
 ///
 /// Replaces four separate flags with a single enum that explicitly
 /// tracks all possible states and their associated data.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum StreamPhase {
     /// No stream active
+    #[default]
     Idle,
 
     /// Actively receiving stream events
@@ -62,12 +63,6 @@ pub enum StreamPhase {
 
     /// Stream completed and message already built/saved
     Complete,
-}
-
-impl Default for StreamPhase {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// Events emitted during streaming (same as before, but used by StreamingManager)
