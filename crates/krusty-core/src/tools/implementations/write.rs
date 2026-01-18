@@ -9,6 +9,9 @@ use tracing::info;
 use crate::tools::registry::Tool;
 use crate::tools::{parse_params, ToolContext, ToolResult};
 
+/// Maximum content size to write (10 MB)
+const MAX_WRITE_SIZE: usize = 10 * 1024 * 1024;
+
 pub struct WriteTool;
 
 #[derive(Deserialize)]
@@ -50,6 +53,15 @@ impl Tool for WriteTool {
             Ok(p) => p,
             Err(e) => return e,
         };
+
+        // Check content size to prevent disk exhaustion
+        if params.content.len() > MAX_WRITE_SIZE {
+            return ToolResult::error(format!(
+                "Content too large: {} bytes (max {} MB)",
+                params.content.len(),
+                MAX_WRITE_SIZE / (1024 * 1024)
+            ));
+        }
 
         // First resolve the path normally
         let path = ctx.resolve_path(&params.file_path);

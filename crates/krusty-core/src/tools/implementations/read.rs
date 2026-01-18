@@ -8,6 +8,9 @@ use tokio::fs;
 use crate::tools::registry::Tool;
 use crate::tools::{parse_params, ToolContext, ToolResult};
 
+/// Maximum file size to read into memory (10 MB)
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 pub struct ReadTool;
 
 #[derive(Deserialize)]
@@ -72,6 +75,20 @@ impl Tool for ReadTool {
 
         if !path.is_file() {
             return ToolResult::error(format!("Path is not a file: {}", path.display()));
+        }
+
+        // Check file size before reading to prevent memory exhaustion
+        let metadata = match fs::metadata(&path).await {
+            Ok(m) => m,
+            Err(e) => return ToolResult::error(format!("Failed to read file metadata: {}", e)),
+        };
+
+        if metadata.len() > MAX_FILE_SIZE {
+            return ToolResult::error(format!(
+                "File too large: {} bytes (max {} MB). Use offset/limit to read portions.",
+                metadata.len(),
+                MAX_FILE_SIZE / (1024 * 1024)
+            ));
         }
 
         let content = match fs::read(&path).await {

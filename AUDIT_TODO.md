@@ -76,29 +76,58 @@
 
 ---
 
-## 🟡 Phase 2b: Architectural Changes (Requires Planning)
+## 🟡 Phase 2b: Architectural Changes (Deferred - Requires Focused Sprint)
 
-These items are larger architectural changes that should be planned carefully.
+These items are significant architectural changes analyzed on Jan 18, 2026.
 
 ### 1. Split App Struct (God Object)
 **Location:** `crates/krusty-cli/src/tui/app.rs`
-**Problem:** 50+ fields, 1,864 lines
-**Impact:** Major refactor affecting entire TUI subsystem
-**Recommendation:** Create a detailed plan before implementation
+**Current State:** 55 fields, 1,864 lines
+**Analysis Completed:**
+- Fields naturally group into 7 logical categories:
+  - AI/Model State (8 fields): current_model, ai_client, api_key, etc.
+  - Session State (6 fields): session_manager, working_dir, preferences, etc.
+  - Processing State (6 fields): is_streaming, streaming, current_activity, etc.
+  - LSP State (3 fields): lsp_manager, lsp_skip_list, pending_lsp_install
+  - Process State (3 fields): process_registry, running_process_count, etc.
+  - Tool State (5 fields): tool_registry, cached_ai_tools, queued_tools, etc.
+  - Agent State (4 fields): event_bus, agent_state, agent_config, cancellation
+**Impact:** Session state alone has 78 references across 12 files
+**Recommendation:** Defer - high effort, marginal benefit. Fields are already well-organized with comments. Consider if needed when adding new features.
 
 ### 2. Complete BlockManager Phase-out
 **Location:** `crates/krusty-cli/src/tui/app.rs:226`
-**Problem:** "Being phased out in favor of conversation-based rendering"
-**Impact:** 12 files use `self.blocks.` - significant migration
-**Current Status:** New `block_ui` and `tool_results` structures exist but migration incomplete
-**Recommendation:** Plan migration file-by-file, test each change
+**Current State:** 140 references to `self.blocks.` across 12 files
+**Analysis Completed:**
+- BlockManager stores block instances (ThinkingBlock, BashBlock, etc.) in Vec collections
+- New approach uses ID-based state (BlockUiStates + ToolResultCache)
+- Migration requires changing rendering to read from conversation instead of blocks
+**Files Affected:** (sorted by impact)
+  1. `handlers/mouse.rs` - 38 refs
+  2. `handlers/rendering/messages.rs` - 24 refs
+  3. `handlers/sessions.rs` - 16 refs
+  4. `app.rs` - 15 refs
+  5. `handlers/streaming.rs` - 11 refs
+  6. `handlers/stream_events.rs` - 10 refs
+  7. `handlers/selection.rs` - 9 refs
+  8. `handlers/scrollbar.rs` - 7 refs
+  9. `handlers/rendering/views.rs` - 4 refs
+  10. `handlers/keyboard.rs` - 3 refs
+  11. `handlers/commands.rs` - 2 refs
+  12. `handlers/hit_test.rs` - 1 ref
+**Recommendation:** Defer - requires focused sprint with comprehensive testing. Current implementation works.
 
 ---
 
-## 🟡 Phase 3: Security Hardening
+## ✅ Phase 3: Security Hardening (Partial)
 
-- [ ] Add file size limits (read.rs, write.rs)
-- [ ] Add bounded channels (9 files use unbounded_channel)
+### File Size Limits ✅
+- [x] Added `MAX_FILE_SIZE` (10 MB) to read.rs - prevents memory exhaustion
+- [x] Added `MAX_WRITE_SIZE` (10 MB) to write.rs - prevents disk exhaustion
+- [x] Error messages guide users to use offset/limit for large files
+
+### Remaining Security Items
+- [ ] Add bounded channels (8 files use unbounded_channel)
 - [ ] MCP tool sandboxing
 - [ ] Windows file permissions
 
