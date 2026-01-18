@@ -1,7 +1,7 @@
 //! Update checker - supports both dev (git) and release (GitHub) modes
 
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
@@ -403,6 +403,7 @@ pub fn detect_repo_path() -> Option<PathBuf> {
 }
 
 /// Detect platform string for download
+#[allow(clippy::unnecessary_wraps)] // Result is needed for unsupported platforms
 fn detect_platform() -> Result<&'static str> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Ok("x86_64-unknown-linux-gnu");
@@ -447,7 +448,7 @@ fn is_newer_version(new: &str, current: &str) -> bool {
 }
 
 /// Extract tar.gz archive properly
-fn extract_tar_gz(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
+fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<()> {
     debug!("Extracting {} to {}", archive.display(), dest.display());
 
     // Create a temp extraction directory
