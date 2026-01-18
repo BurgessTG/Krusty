@@ -1,10 +1,14 @@
 //! MCP Tool wrapper
 //!
 //! Wraps MCP tools as our Tool trait for seamless integration.
+//!
+//! NOTE: MCP tools execute on external servers and bypass Krusty's sandbox.
+//! When sandbox_root is configured, a warning is logged for visibility.
 
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
+use tracing::warn;
 
 use super::manager::McpManager;
 use super::protocol::{format_mcp_result, McpToolDef};
@@ -48,7 +52,15 @@ impl Tool for McpTool {
         self.definition.input_schema.clone()
     }
 
-    async fn execute(&self, params: Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> ToolResult {
+        // Warn when MCP tools are used in sandboxed mode - they bypass sandbox restrictions
+        if ctx.sandbox_root.is_some() {
+            warn!(
+                "MCP tool '{}' executing in sandboxed context - MCP servers bypass sandbox restrictions",
+                self.full_name
+            );
+        }
+
         match self
             .manager
             .call_tool(&self.server_name, &self.tool_name, params)

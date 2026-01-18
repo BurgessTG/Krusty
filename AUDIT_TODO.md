@@ -126,10 +126,36 @@ These items are significant architectural changes analyzed on Jan 18, 2026.
 - [x] Added `MAX_WRITE_SIZE` (10 MB) to write.rs - prevents disk exhaustion
 - [x] Error messages guide users to use offset/limit for large files
 
-### Remaining Security Items
-- [ ] Add bounded channels (8 files use unbounded_channel)
-- [ ] MCP tool sandboxing
-- [ ] Windows file permissions
+### MCP Tool Sandbox Warning ✅
+- [x] Added warning log when MCP tools execute in sandboxed context
+- [x] MCP tools run on external servers and inherently bypass Krusty's sandbox
+- [x] Warning provides visibility for multi-tenant deployments
+
+### Analyzed - Low Priority/Deferred
+
+#### Bounded Channels (Deferred)
+**Status:** Analyzed, not implemented
+**Files:** 8 files use unbounded_channel
+**Analysis:**
+- LSP diagnostics: External input, but bounded channel risks blocking receive loop or dropping messages
+- SSE streaming: Must remain unbounded - backpressure breaks streaming
+- Progress channels: Internal, low flood risk
+**Risk Assessment:** Low - channels consumed quickly by event loop, would need pathological LSP server to cause memory issues
+**Recommendation:** Keep unbounded for now, monitor memory in production
+
+#### MCP Full Sandboxing (Deferred)
+**Status:** Warning added, full sandboxing not implemented
+**Challenge:** MCP tools communicate with external servers via stdio/HTTP
+**Analysis:**
+- MCP servers are separate processes outside Krusty's control
+- Arguments are arbitrary JSON - can't reliably detect file paths
+- Full sandboxing would require MCP protocol changes or server-side enforcement
+**Recommendation:** Document that MCP servers should be trusted; consider containerization for multi-tenant
+
+#### Windows File Permissions (Deferred)
+**Status:** Not implemented, needs Windows testing environment
+**Current State:** Files created with default system permissions
+**Recommendation:** Add when Windows testing capability available
 
 ---
 
