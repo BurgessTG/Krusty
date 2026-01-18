@@ -1,0 +1,603 @@
+//! AI provider configuration
+//!
+//! Defines provider types, configurations, and built-in provider registry
+//! for Anthropic-compatible API endpoints.
+
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::sync::LazyLock;
+
+/// Unique identifier for each supported provider
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderId {
+    #[default]
+    Anthropic,
+    OpenRouter,
+    OpenCodeZen,
+    ZAi,
+    MiniMax,
+    Kimi,
+}
+
+impl ProviderId {
+    /// Get all available provider IDs
+    /// Order: Anthropic first (default), then smallest to largest, OpenRouter last
+    pub fn all() -> &'static [ProviderId] {
+        &[
+            ProviderId::Anthropic,   // Default provider, always first
+            ProviderId::MiniMax,     // 1 model
+            ProviderId::Kimi,        // 1 model
+            ProviderId::ZAi,         // 3 models
+            ProviderId::OpenCodeZen, // 11 models
+            ProviderId::OpenRouter,  // 100+ dynamic models, always last
+        ]
+    }
+
+    /// Get the storage key for this provider (used in credentials.json)
+    pub fn storage_key(&self) -> &'static str {
+        match self {
+            ProviderId::Anthropic => "anthropic",
+            ProviderId::OpenRouter => "openrouter",
+            ProviderId::OpenCodeZen => "opencode_zen",
+            ProviderId::ZAi => "z_ai",
+            ProviderId::MiniMax => "minimax",
+            ProviderId::Kimi => "kimi",
+        }
+    }
+}
+
+impl fmt::Display for ProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ProviderId::Anthropic => write!(f, "Anthropic"),
+            ProviderId::OpenRouter => write!(f, "OpenRouter"),
+            ProviderId::OpenCodeZen => write!(f, "OpenCode Zen"),
+            ProviderId::ZAi => write!(f, "Z.ai"),
+            ProviderId::MiniMax => write!(f, "MiniMax"),
+            ProviderId::Kimi => write!(f, "Kimi"),
+        }
+    }
+}
+
+/// How to send the API key in requests
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AuthHeader {
+    /// Use `x-api-key: <key>` header (Anthropic style)
+    #[default]
+    XApiKey,
+    /// Use `Authorization: Bearer <key>` header (OpenAI style)
+    Bearer,
+}
+
+// ============================================================================
+// Universal Reasoning Support
+// ============================================================================
+
+/// Different reasoning/thinking formats used by various providers
+/// When enabled, we always use MAX effort - no in-between settings
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReasoningFormat {
+    /// Anthropic Claude: `thinking.budget_tokens` (we use max: 32000)
+    Anthropic,
+    /// OpenAI o1/o3/GPT-5: `reasoning_effort: "high"`
+    OpenAI,
+    /// DeepSeek R1: `reasoning.enabled: true`
+    DeepSeek,
+}
+
+
+/// Information about a model offered by a provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Model ID to send in API requests
+    pub id: String,
+    /// Human-readable display name
+    pub display_name: String,
+    /// Context window size in tokens
+    pub context_window: usize,
+    /// Maximum output tokens
+    pub max_output: usize,
+    /// Reasoning/thinking support (None = not supported)
+    pub reasoning: Option<ReasoningFormat>,
+}
+
+impl ModelInfo {
+    pub fn new(id: &str, display_name: &str, context_window: usize, max_output: usize) -> Self {
+        Self {
+            id: id.to_string(),
+            display_name: display_name.to_string(),
+            context_window,
+            max_output,
+            reasoning: None,
+        }
+    }
+
+    /// Add Anthropic-style extended thinking support
+    pub fn with_anthropic_thinking(mut self) -> Self {
+        self.reasoning = Some(ReasoningFormat::Anthropic);
+        self
+    }
+}
+
+/// Configuration for an AI provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderConfig {
+    /// Unique identifier
+    pub id: ProviderId,
+    /// Display name
+    pub name: String,
+    /// Short description for UI
+    pub description: String,
+    /// API base URL (without trailing slash)
+    pub base_url: String,
+    /// How to send authentication
+    pub auth_header: AuthHeader,
+    /// Available models (empty for dynamic providers like OpenRouter)
+    pub models: Vec<ModelInfo>,
+    /// Whether this provider supports tool calling
+    pub supports_tools: bool,
+    /// Whether models can have dynamic list (fetched from API)
+    pub dynamic_models: bool,
+    /// Pricing hint to show in UI (e.g., "~1% of Claude")
+    pub pricing_hint: Option<String>,
+}
+
+impl ProviderConfig {
+    /// Get the default model ID for this provider
+    /// Returns the first model in the list, or a hardcoded fallback for dynamic providers
+    pub fn default_model(&self) -> &str {
+        if let Some(first) = self.models.first() {
+            &first.id
+        } else {
+            // Dynamic providers need a fallback
+            match self.id {
+                ProviderId::OpenRouter => "anthropic/claude-sonnet-4",
+                ProviderId::OpenCodeZen => "claude-sonnet-4-5",
+                _ => "claude-opus-4-5-20251101", // Ultimate fallback
+            }
+        }
+    }
+
+    /// Check if a model ID is valid for this provider
+    pub fn has_model(&self, model_id: &str) -> bool {
+        // For dynamic providers, we can't validate statically
+        if self.dynamic_models {
+            return true;
+        }
+        self.models.iter().any(|m| m.id == model_id)
+    }
+}
+
+// ============================================================================
+// Model Mapping System
+// ============================================================================
+
+/// Canonical model families that exist across providers
+/// Maps to provider-specific IDs for seamless switching
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ModelFamily {
+    ClaudeOpus4_5,
+    ClaudeSonnet4_5,
+    ClaudeSonnet4,
+    ClaudeHaiku4_5,
+    ClaudeOpus4,
+}
+
+/// Model ID mapping entry: (canonical_family, provider, provider_specific_id)
+static MODEL_MAPPINGS: LazyLock<Vec<(ModelFamily, ProviderId, &'static str)>> = LazyLock::new(|| {
+    vec![
+        // Claude Opus 4.5
+        (ModelFamily::ClaudeOpus4_5, ProviderId::Anthropic, "claude-opus-4-5-20251101"),
+        (ModelFamily::ClaudeOpus4_5, ProviderId::OpenRouter, "anthropic/claude-opus-4.5"),
+        (ModelFamily::ClaudeOpus4_5, ProviderId::OpenCodeZen, "claude-opus-4-5"),
+
+        // Claude Sonnet 4.5
+        (ModelFamily::ClaudeSonnet4_5, ProviderId::Anthropic, "claude-sonnet-4-5-20250929"),
+        (ModelFamily::ClaudeSonnet4_5, ProviderId::OpenRouter, "anthropic/claude-sonnet-4.5"),
+        (ModelFamily::ClaudeSonnet4_5, ProviderId::OpenCodeZen, "claude-sonnet-4-5"),
+
+        // Claude Sonnet 4
+        (ModelFamily::ClaudeSonnet4, ProviderId::Anthropic, "claude-sonnet-4-20250514"),
+        (ModelFamily::ClaudeSonnet4, ProviderId::OpenRouter, "anthropic/claude-sonnet-4"),
+        (ModelFamily::ClaudeSonnet4, ProviderId::OpenCodeZen, "claude-sonnet-4"),
+
+        // Claude Haiku 4.5
+        (ModelFamily::ClaudeHaiku4_5, ProviderId::Anthropic, "claude-haiku-4-5-20251001"),
+        (ModelFamily::ClaudeHaiku4_5, ProviderId::OpenRouter, "anthropic/claude-haiku-4.5"),
+        (ModelFamily::ClaudeHaiku4_5, ProviderId::OpenCodeZen, "claude-haiku-4-5"),
+
+        // Claude Opus 4
+        (ModelFamily::ClaudeOpus4, ProviderId::Anthropic, "claude-opus-4-20250514"),
+        (ModelFamily::ClaudeOpus4, ProviderId::OpenRouter, "anthropic/claude-opus-4"),
+    ]
+});
+
+/// Find the canonical model family for a provider-specific model ID
+pub fn get_model_family(model_id: &str) -> Option<ModelFamily> {
+    MODEL_MAPPINGS
+        .iter()
+        .find(|(_, _, id)| *id == model_id)
+        .map(|(family, _, _)| *family)
+}
+
+/// Translate a model ID from one provider to another
+/// Returns None if no mapping exists (model is provider-specific)
+pub fn translate_model_id(model_id: &str, from: ProviderId, to: ProviderId) -> Option<String> {
+    // Same provider, no translation needed
+    if from == to {
+        return Some(model_id.to_string());
+    }
+
+    // Find the canonical family for this model
+    let family = get_model_family(model_id)?;
+
+    // Find the target provider's ID for this family
+    MODEL_MAPPINGS
+        .iter()
+        .find(|(f, p, _)| *f == family && *p == to)
+        .map(|(_, _, id)| id.to_string())
+}
+
+/// Get the equivalent model ID for a target provider, or the provider's default
+pub fn translate_model_or_default(model_id: &str, from: ProviderId, to: ProviderId) -> String {
+    translate_model_id(model_id, from, to).unwrap_or_else(|| {
+        get_provider(to)
+            .map(|p| p.default_model().to_string())
+            .unwrap_or_else(|| "claude-opus-4-5-20251101".to_string())
+    })
+}
+
+// ============================================================================
+// Provider Capabilities
+// ============================================================================
+
+/// Features supported by a provider (used for feature negotiation)
+#[derive(Debug, Clone, Default)]
+pub struct ProviderCapabilities {
+    /// Server-executed web search (Anthropic: web_search_20250305)
+    pub web_search: bool,
+    /// Server-executed web fetch (Anthropic: web_fetch_20250910)
+    pub web_fetch: bool,
+    /// Context management / auto-clearing
+    pub context_management: bool,
+    /// Prompt caching support
+    pub prompt_caching: bool,
+    /// OAuth authentication support
+    pub oauth: bool,
+    /// Web search via plugins array (OpenRouter style)
+    pub web_plugins: bool,
+}
+
+impl ProviderCapabilities {
+    /// Get capabilities for a provider
+    pub fn for_provider(provider: ProviderId) -> Self {
+        match provider {
+            ProviderId::Anthropic => Self {
+                web_search: true,
+                web_fetch: true,
+                context_management: true,
+                prompt_caching: true,
+                oauth: true,
+                web_plugins: false,
+            },
+            ProviderId::OpenRouter => Self {
+                web_search: false,  // Not via server tools
+                web_fetch: false,
+                context_management: false,
+                prompt_caching: false,
+                oauth: false,
+                web_plugins: true,  // Uses plugins array
+            },
+            ProviderId::OpenCodeZen => Self {
+                web_search: true,   // Supports Anthropic's web_search_20250305
+                web_fetch: true,    // Supports Anthropic's web_fetch tool
+                context_management: false,
+                prompt_caching: false,  // Unclear if supported
+                oauth: false,
+                web_plugins: false,
+            },
+            // Other providers: minimal capabilities
+            ProviderId::ZAi | ProviderId::MiniMax | ProviderId::Kimi => Self::default(),
+        }
+    }
+}
+
+/// Lazily initialized built-in provider configurations
+static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
+    vec![
+        // Anthropic - the default provider
+        ProviderConfig {
+            id: ProviderId::Anthropic,
+            name: "Anthropic".to_string(),
+            description: "Claude models (Opus, Sonnet, Haiku)".to_string(),
+            base_url: "https://api.anthropic.com/v1/messages".to_string(),
+            auth_header: AuthHeader::XApiKey,
+            models: vec![
+                ModelInfo::new(
+                    "claude-opus-4-5-20251101",
+                    "Claude Opus 4.5",
+                    200_000,
+                    16_384,
+                )
+                .with_anthropic_thinking(),
+                ModelInfo::new(
+                    "claude-sonnet-4-5-20250929",
+                    "Claude Sonnet 4.5",
+                    1_000_000, // Sonnet 4.5 has 1M context
+                    16_384,
+                )
+                .with_anthropic_thinking(),
+                ModelInfo::new(
+                    "claude-haiku-4-5-20251001",
+                    "Claude Haiku 4.5",
+                    200_000,
+                    16_384,
+                ),
+            ],
+            supports_tools: true,
+            dynamic_models: false,
+            pricing_hint: None,
+        },
+        // OpenRouter - access to 100+ models (Anthropic-compatible "skin")
+        ProviderConfig {
+            id: ProviderId::OpenRouter,
+            name: "OpenRouter".to_string(),
+            description: "100+ models (GPT, Gemini, Llama, Claude)".to_string(),
+            base_url: "https://openrouter.ai/api/v1/messages".to_string(),
+            auth_header: AuthHeader::Bearer,
+            models: vec![], // Fetched dynamically
+            supports_tools: true,
+            dynamic_models: true,
+            pricing_hint: None,
+        },
+        // OpenCode Zen - curated models for coding agents (Anthropic-compatible)
+        ProviderConfig {
+            id: ProviderId::OpenCodeZen,
+            name: "OpenCode Zen".to_string(),
+            description: "Curated coding models (Claude, GPT-5, Gemini, Qwen)".to_string(),
+            base_url: "https://opencode.ai/zen/v1/messages".to_string(),
+            auth_header: AuthHeader::XApiKey,  // Uses x-api-key, not Bearer
+            models: vec![], // Fetched dynamically from /v1/models
+            supports_tools: true,
+            dynamic_models: true,
+            pricing_hint: Some("Pay-as-you-go, free tier available".to_string()),
+        },
+        // Z.ai - cheap GLM models
+        ProviderConfig {
+            id: ProviderId::ZAi,
+            name: "Z.ai".to_string(),
+            description: "GLM models (4.7, 4.6, 4.5)".to_string(),
+            base_url: "https://open.z.ai/v1/messages".to_string(),
+            auth_header: AuthHeader::XApiKey,
+            models: vec![
+                ModelInfo::new("glm-4.7", "GLM 4.7", 128_000, 16_384),
+                ModelInfo::new("glm-4.6", "GLM 4.6", 128_000, 16_384),
+                ModelInfo::new("glm-4.5", "GLM 4.5", 98_000, 16_384),
+            ],
+            supports_tools: true,
+            dynamic_models: false,
+            pricing_hint: None,
+        },
+        // MiniMax - M2 model (Anthropic-compatible API)
+        ProviderConfig {
+            id: ProviderId::MiniMax,
+            name: "MiniMax".to_string(),
+            description: "M2.1 model (fast, interleaved thinking)".to_string(),
+            base_url: "https://api.minimax.io/anthropic/v1/messages".to_string(),
+            auth_header: AuthHeader::XApiKey,
+            models: vec![
+                ModelInfo::new("MiniMax-M2.1", "MiniMax M2.1", 200_000, 64_000)
+                    .with_anthropic_thinking(), // MiniMax supports interleaved thinking
+            ],
+            supports_tools: true,
+            dynamic_models: false,
+            pricing_hint: Some("~5% of Claude".to_string()),
+        },
+        // Kimi/Moonshot - K2 model (Anthropic-compatible API)
+        ProviderConfig {
+            id: ProviderId::Kimi,
+            name: "Kimi".to_string(),
+            description: "K2 model (256K context)".to_string(),
+            base_url: "https://api.moonshot.cn/anthropic/v1/messages".to_string(),
+            auth_header: AuthHeader::XApiKey,
+            models: vec![ModelInfo::new("kimi-k2", "Kimi K2", 256_000, 16_384)],
+            supports_tools: true,
+            dynamic_models: false,
+            pricing_hint: None,
+        },
+    ]
+});
+
+/// Get all built-in provider configurations (cached, no allocation)
+pub fn builtin_providers() -> &'static [ProviderConfig] {
+    &BUILTIN_PROVIDERS
+}
+
+/// Get a specific provider configuration by ID
+pub fn get_provider(id: ProviderId) -> Option<&'static ProviderConfig> {
+    BUILTIN_PROVIDERS.iter().find(|p| p.id == id)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_provider_id_display() {
+        assert_eq!(ProviderId::Anthropic.to_string(), "Anthropic");
+        assert_eq!(ProviderId::OpenRouter.to_string(), "OpenRouter");
+        assert_eq!(ProviderId::ZAi.to_string(), "Z.ai");
+    }
+
+    #[test]
+    fn test_storage_keys() {
+        assert_eq!(ProviderId::Anthropic.storage_key(), "anthropic");
+        assert_eq!(ProviderId::ZAi.storage_key(), "z_ai");
+    }
+
+    #[test]
+    fn test_builtin_providers() {
+        let providers = builtin_providers();
+        assert_eq!(providers.len(), 6);
+        assert!(providers.iter().any(|p| p.id == ProviderId::Anthropic));
+        assert!(providers.iter().any(|p| p.id == ProviderId::OpenRouter));
+        assert!(providers.iter().any(|p| p.id == ProviderId::OpenCodeZen));
+    }
+
+    #[test]
+    fn test_get_provider() {
+        let anthropic = get_provider(ProviderId::Anthropic).unwrap();
+        assert_eq!(anthropic.name, "Anthropic");
+        assert!(!anthropic.models.is_empty());
+    }
+
+    #[test]
+    fn test_anthropic_config() {
+        let provider = get_provider(ProviderId::Anthropic).unwrap();
+        assert_eq!(provider.base_url, "https://api.anthropic.com/v1/messages");
+        assert_eq!(provider.auth_header, AuthHeader::XApiKey);
+        assert_eq!(provider.default_model(), "claude-opus-4-5-20251101");
+    }
+
+    #[test]
+    fn test_openrouter_config() {
+        let provider = get_provider(ProviderId::OpenRouter).unwrap();
+        // OpenRouter uses Anthropic-compatible API at /api/v1/messages
+        assert_eq!(provider.base_url, "https://openrouter.ai/api/v1/messages");
+        assert_eq!(provider.auth_header, AuthHeader::Bearer);
+        assert!(provider.dynamic_models);
+    }
+
+    #[test]
+    fn test_model_validation() {
+        let anthropic = get_provider(ProviderId::Anthropic).unwrap();
+        // Valid Anthropic model
+        assert!(anthropic.has_model("claude-opus-4-5-20251101"));
+        // Invalid - OpenRouter format
+        assert!(!anthropic.has_model("anthropic/claude-opus-4.5"));
+
+        // OpenRouter allows any model (dynamic)
+        let openrouter = get_provider(ProviderId::OpenRouter).unwrap();
+        assert!(openrouter.has_model("anthropic/claude-opus-4.5"));
+        assert!(openrouter.has_model("openai/gpt-4"));
+    }
+
+    #[test]
+    fn test_model_family_detection() {
+        // Anthropic format
+        assert_eq!(
+            get_model_family("claude-opus-4-5-20251101"),
+            Some(ModelFamily::ClaudeOpus4_5)
+        );
+        assert_eq!(
+            get_model_family("claude-sonnet-4-5-20250929"),
+            Some(ModelFamily::ClaudeSonnet4_5)
+        );
+
+        // OpenRouter format
+        assert_eq!(
+            get_model_family("anthropic/claude-opus-4.5"),
+            Some(ModelFamily::ClaudeOpus4_5)
+        );
+        assert_eq!(
+            get_model_family("anthropic/claude-sonnet-4"),
+            Some(ModelFamily::ClaudeSonnet4)
+        );
+
+        // Unknown model
+        assert_eq!(get_model_family("gpt-4"), None);
+    }
+
+    #[test]
+    fn test_model_translation_anthropic_to_openrouter() {
+        let translated = translate_model_id(
+            "claude-opus-4-5-20251101",
+            ProviderId::Anthropic,
+            ProviderId::OpenRouter,
+        );
+        assert_eq!(translated, Some("anthropic/claude-opus-4.5".to_string()));
+
+        let translated = translate_model_id(
+            "claude-sonnet-4-5-20250929",
+            ProviderId::Anthropic,
+            ProviderId::OpenRouter,
+        );
+        assert_eq!(translated, Some("anthropic/claude-sonnet-4.5".to_string()));
+    }
+
+    #[test]
+    fn test_model_translation_openrouter_to_anthropic() {
+        let translated = translate_model_id(
+            "anthropic/claude-opus-4.5",
+            ProviderId::OpenRouter,
+            ProviderId::Anthropic,
+        );
+        assert_eq!(translated, Some("claude-opus-4-5-20251101".to_string()));
+
+        let translated = translate_model_id(
+            "anthropic/claude-haiku-4.5",
+            ProviderId::OpenRouter,
+            ProviderId::Anthropic,
+        );
+        assert_eq!(translated, Some("claude-haiku-4-5-20251001".to_string()));
+    }
+
+    #[test]
+    fn test_model_translation_same_provider() {
+        // Same provider should return the same ID
+        let translated = translate_model_id(
+            "claude-opus-4-5-20251101",
+            ProviderId::Anthropic,
+            ProviderId::Anthropic,
+        );
+        assert_eq!(translated, Some("claude-opus-4-5-20251101".to_string()));
+    }
+
+    #[test]
+    fn test_model_translation_unknown_model() {
+        // Unknown model should return None
+        let translated = translate_model_id(
+            "gpt-4",
+            ProviderId::OpenRouter,
+            ProviderId::Anthropic,
+        );
+        assert_eq!(translated, None);
+    }
+
+    #[test]
+    fn test_translate_model_or_default() {
+        // Known model: translate
+        let result = translate_model_or_default(
+            "claude-opus-4-5-20251101",
+            ProviderId::Anthropic,
+            ProviderId::OpenRouter,
+        );
+        assert_eq!(result, "anthropic/claude-opus-4.5");
+
+        // Unknown model: fallback to provider default
+        let result = translate_model_or_default(
+            "glm-4.7",
+            ProviderId::ZAi,
+            ProviderId::Anthropic,
+        );
+        assert_eq!(result, "claude-opus-4-5-20251101");
+    }
+
+    #[test]
+    fn test_provider_capabilities() {
+        let anthropic = ProviderCapabilities::for_provider(ProviderId::Anthropic);
+        assert!(anthropic.web_search);
+        assert!(anthropic.web_fetch);
+        assert!(anthropic.oauth);
+        assert!(!anthropic.web_plugins);
+
+        let openrouter = ProviderCapabilities::for_provider(ProviderId::OpenRouter);
+        assert!(!openrouter.web_search);
+        assert!(!openrouter.web_fetch);
+        assert!(openrouter.web_plugins);
+
+        let zai = ProviderCapabilities::for_provider(ProviderId::ZAi);
+        assert!(!zai.web_search);
+        assert!(!zai.web_plugins);
+    }
+}

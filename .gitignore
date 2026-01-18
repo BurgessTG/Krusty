@@ -1,0 +1,23 @@
+# Krusty Dev .gitignore
+
+# Build outputs
+target/
+
+# MCP server overrides (user preferences)
+# This file stores which MCP servers are enabled/disabled per project
+.mcp_overrides.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend build
+frontend/node_modules
+frontend/build

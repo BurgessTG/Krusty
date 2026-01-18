@@ -1,0 +1,204 @@
+//! Help popup with tabbed content
+
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
+    Frame,
+};
+
+use super::common::{center_rect, popup_block, render_popup_background, PopupSize};
+use crate::tui::themes::Theme;
+
+/// Help popup state
+pub struct HelpPopup {
+    pub tab_index: usize,
+    pub scroll_offset: usize,
+}
+
+impl Default for HelpPopup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HelpPopup {
+    pub fn new() -> Self {
+        Self {
+            tab_index: 0,
+            scroll_offset: 0,
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        self.tab_index = (self.tab_index + 1) % 2;
+        self.scroll_offset = 0;
+    }
+
+    pub fn render(&self, f: &mut Frame, theme: &Theme) {
+        let (w, h) = PopupSize::Large.dimensions();
+        let area = center_rect(w, h, f.area());
+        render_popup_background(f, area, theme);
+
+        let block = popup_block(theme);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        // Tab headers
+        let tabs = ["Commands", "Keybinds"];
+        let tab_spans: Vec<Span> = tabs
+            .iter()
+            .enumerate()
+            .flat_map(|(i, tab)| {
+                let mut spans = Vec::new();
+                if i > 0 {
+                    spans.push(Span::styled(" | ", Style::default().fg(theme.text_color)));
+                }
+                let style = if i == self.tab_index {
+                    Style::default()
+                        .fg(theme.accent_color)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                } else {
+                    Style::default().fg(theme.text_color)
+                };
+                spans.push(Span::styled(tab.to_string(), style));
+                spans
+            })
+            .collect();
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2), // Tabs
+                Constraint::Min(5),    // Content
+                Constraint::Length(2), // Footer
+            ])
+            .split(inner);
+
+        // Render tabs
+        let tabs_widget = Paragraph::new(Line::from(tab_spans)).alignment(Alignment::Center);
+        f.render_widget(tabs_widget, chunks[0]);
+
+        // Content based on tab
+        let content = match self.tab_index {
+            0 => self.commands_content(theme),
+            1 => self.keybinds_content(theme),
+            _ => vec![],
+        };
+
+        let content_widget = Paragraph::new(content)
+            .style(Style::default().bg(theme.bg_color))
+            .scroll((self.scroll_offset as u16, 0));
+        f.render_widget(content_widget, chunks[1]);
+
+        // Footer
+        let footer = Paragraph::new(Line::from(vec![
+            Span::styled(
+                "Tab",
+                Style::default()
+                    .fg(theme.accent_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": switch tabs  ", Style::default().fg(theme.text_color)),
+            Span::styled(
+                "Esc",
+                Style::default()
+                    .fg(theme.accent_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": close", Style::default().fg(theme.text_color)),
+        ]))
+        .alignment(Alignment::Center);
+        f.render_widget(footer, chunks[2]);
+    }
+
+    fn commands_content(&self, theme: &Theme) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from("")];
+
+        let commands = [
+            ("/home", "Return to start menu"),
+            ("/load", "Load previous session"),
+            ("/model", "Select AI model"),
+            ("/auth", "Manage API providers"),
+            ("/theme", "Change color theme"),
+            ("/clear", "Clear chat messages"),
+            ("/pinch", "Compress context to new session"),
+            ("/plan", "View/manage active plan"),
+            ("/mcp", "Browse and manage MCP servers"),
+            ("/skills", "Browse skills"),
+            ("/lsp", "Browse LSP extensions"),
+            ("/ps", "View background processes"),
+            ("/terminal", "Open interactive terminal"),
+            ("/init", "Generate KRAB.md"),
+            ("/cmd", "Show this help"),
+        ];
+
+        for (cmd, desc) in commands {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:<12}", cmd),
+                    Style::default().fg(theme.accent_color),
+                ),
+                Span::styled(desc.to_string(), Style::default().fg(theme.text_color)),
+            ]));
+        }
+
+        lines
+    }
+
+    fn keybinds_content(&self, theme: &Theme) -> Vec<Line<'static>> {
+        let mut lines = vec![Line::from("")];
+
+        let sections = [
+            (
+                "Global",
+                vec![
+                    ("Ctrl+Q", "Quit"),
+                    ("Ctrl+B", "Toggle BUILD/PLAN mode"),
+                    ("Ctrl+T", "Toggle plan sidebar"),
+                    ("Ctrl+P", "Open process list"),
+                    ("Tab", "Toggle extended thinking"),
+                    ("Esc", "Cancel AI / close popup"),
+                ],
+            ),
+            (
+                "Input",
+                vec![
+                    ("Enter", "Send message"),
+                    ("Shift+Enter", "New line"),
+                    ("Ctrl+V", "Paste text or image"),
+                    ("Ctrl+C", "Clear input"),
+                    ("Ctrl+W", "Delete word"),
+                    ("@", "Search files to attach"),
+                ],
+            ),
+            (
+                "Navigation",
+                vec![("↑/↓", "Autocomplete"), ("PgUp/Dn", "Scroll chat")],
+            ),
+        ];
+
+        for (section, bindings) in sections {
+            lines.push(Line::from(Span::styled(
+                format!("{}:", section),
+                Style::default()
+                    .fg(theme.title_color)
+                    .add_modifier(Modifier::BOLD),
+            )));
+
+            for (key, desc) in bindings {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {:<14}", key),
+                        Style::default().fg(theme.accent_color),
+                    ),
+                    Span::styled(desc.to_string(), Style::default().fg(theme.text_color)),
+                ]));
+            }
+            lines.push(Line::from(""));
+        }
+
+        lines
+    }
+}

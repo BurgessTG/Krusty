@@ -1,0 +1,104 @@
+[package]
+name = "krusty-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core library for Krusty - AI, storage, tools, LSP, and extensions"
+
+[dependencies]
+# Async Runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+
+# Async Utilities
+async-trait = "0.1"
+futures = "0.3"
+tokio-stream = "0.1"
+tokio-util = "0.7"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Image processing (for tool screenshots)
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Database (SQLite for local storage)
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# LSP
+lsp-types = "0.97"
+
+# WASM Extensions (Zed compatibility)
+wasmtime = { version = "29", default-features = false, features = [
+    "async",
+    "demangle",
+    "runtime",
+    "cranelift",
+    "component-model",
+    "incremental-cache",
+    "parallel-compilation",
+] }
+wasmtime-wasi = "29"
+wasmparser = "0.222"
+semver = "1.0"
+
+# Auth
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+rand = "0.8"
+
+# Configuration
+dirs = "6.0"
+
+# URL/Web
+url = "2.5"
+tiny_http = "0.12"
+
+# Utilities
+which = "7.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+regex = "1.11"
+once_cell = "1.20"
+glob = "0.3"
+walkdir = "2.5"
+similar = "2.4"
+shell-words = "1.1"
+scopeguard = "1.2"
+bytes = "1.10"
+
+# Archive handling (for Zed extensions)
+flate2 = "1.0"
+tar = "0.4"
+zip = "2.2"
+xz2 = "0.1"
+
+# Concurrency
+dashmap = "6.1"
+parking_lot = "0.12"
+moka = { version = "0.12", features = ["sync"] }
+
+# File System
+ignore = "0.4"
+
+# Version Control
+git2 = "0.19"
+
+[dev-dependencies]
+tempfile = "3.14"
+
+[lints]
+workspace = true
+

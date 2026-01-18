@@ -1,0 +1,91 @@
+//! Tool implementations
+//!
+//! Core tools:
+//! - read: Read files
+//! - write: Create/overwrite files
+//! - edit: Edit specific lines
+//! - bash: Execute shell commands
+//! - grep: Search with ripgrep
+//! - glob: Find files by pattern
+//! - processes: Manage background processes
+//! - explore: Spawn parallel sub-agents for deep codebase exploration
+//! - build: Spawn parallel Opus builder agents (The Kraken)
+//! - skill: Invoke skills for specialized instructions
+//! - ask_user: Interactive user prompts (handled by UI)
+//! - task_complete: Mark plan tasks as complete (handled by UI)
+//! - enter_plan_mode: Switch to plan mode (handled by UI)
+
+pub mod ask_user;
+pub mod bash;
+pub mod build;
+pub mod edit;
+pub mod explore;
+pub mod glob;
+pub mod grep;
+pub mod plan_mode;
+pub mod processes;
+pub mod read;
+pub mod skill;
+pub mod task_complete;
+pub mod write;
+
+pub use ask_user::AskUserQuestionTool;
+pub use bash::BashTool;
+pub use build::BuildTool;
+pub use edit::EditTool;
+pub use explore::ExploreTool;
+pub use glob::GlobTool;
+pub use grep::GrepTool;
+pub use plan_mode::EnterPlanModeTool;
+pub use processes::ProcessesTool;
+pub use read::ReadTool;
+pub use skill::SkillTool;
+pub use task_complete::TaskCompleteTool;
+pub use write::WriteTool;
+
+use crate::agent::AgentCancellation;
+use crate::ai::anthropic::AnthropicClient;
+use crate::lsp::LspManager;
+use crate::tools::registry::ToolRegistry;
+use std::sync::Arc;
+
+/// Register all built-in tools (except explore which needs client)
+pub async fn register_all_tools(registry: &ToolRegistry, _lsp_manager: Option<Arc<LspManager>>) {
+    registry.register(Arc::new(ReadTool)).await;
+    registry.register(Arc::new(WriteTool)).await;
+    registry.register(Arc::new(EditTool)).await;
+    registry.register(Arc::new(BashTool)).await;
+    registry.register(Arc::new(GrepTool)).await;
+    registry.register(Arc::new(GlobTool)).await;
+    registry.register(Arc::new(ProcessesTool)).await;
+    registry.register(Arc::new(SkillTool)).await;
+    registry.register(Arc::new(AskUserQuestionTool)).await;
+    registry.register(Arc::new(TaskCompleteTool)).await;
+    registry.register(Arc::new(EnterPlanModeTool)).await;
+}
+
+/// Register the explore tool (requires AI client)
+///
+/// Call this after authentication when the client is available.
+pub async fn register_explore_tool(
+    registry: &ToolRegistry,
+    client: Arc<AnthropicClient>,
+    cancellation: AgentCancellation,
+) {
+    registry
+        .register(Arc::new(ExploreTool::new(client, cancellation)))
+        .await;
+}
+
+/// Register the build tool (The Kraken - parallel Opus builders)
+///
+/// Call this after authentication when the client is available.
+pub async fn register_build_tool(
+    registry: &ToolRegistry,
+    client: Arc<AnthropicClient>,
+    cancellation: AgentCancellation,
+) {
+    registry
+        .register(Arc::new(BuildTool::new(client, cancellation)))
+        .await;
+}

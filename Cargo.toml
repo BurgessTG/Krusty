@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# Default to running krusty-cli
+default-members = ["crates/krusty-cli"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# Lint configuration - prevent dead code accumulation
+[workspace.lints.rust]
+dead_code = "warn"
+unused_imports = "warn"
+unused_variables = "warn"
+unused_mut = "warn"
+
+[workspace.lints.clippy]
+# Catch common issues
+redundant_clone = "warn"
+unnecessary_wraps = "warn"
+# Allow these in development (too noisy otherwise)
+too_many_arguments = "allow"
+type_complexity = "allow"

@@ -1,0 +1,387 @@
+//! Pinch orchestration
+//!
+//! Handles the multi-stage pinch flow:
+//! 1. User provides preservation hints
+//! 2. AI summarizes conversation (async, using Sonnet 4.5 + extended thinking)
+//! 3. User provides direction for next phase
+//! 4. New linked session is created
+
+use std::path::PathBuf;
+
+use crate::agent::{generate_summary, PinchContext, SummarizationResult};
+use crate::ai::anthropic::AnthropicClient;
+use crate::storage::{FileActivityTracker, RankedFile};
+use crate::tui::app::App;
+use crate::tui::utils::{SummarizationUpdate, TitleUpdate};
+
+impl App {
+    /// Start the summarization phase of pinch
+    ///
+    /// Spawns an async task that:
+    /// 1. Reads key file contents based on activity ranking
+    /// 2. Reads CLAUDE.md/KRAB.md for project context
+    /// 3. Sends full conversation + context to Sonnet 4.5 with extended thinking
+    /// 4. Returns structured summary for user review
+    pub fn start_pinch_summarization(&mut self) {
+        // Move popup to summarizing state
+        self.popups.pinch.start_summarizing();
+
+        // Get preservation hints from first stage
+        let preservation_hints = self
+            .popups
+            .pinch
+            .get_preservation_input()
+            .map(|s| s.to_string());
+
+        // Get ranked files for context
+        let ranked_files = self.get_ranked_files_for_summarization();
+
+        // Read key file contents (top 10 by importance)
+        let file_contents = self.read_key_file_contents(&ranked_files);
+
+        // Read project context (CLAUDE.md or KRAB.md)
+        let project_context = self.read_project_context();
+
+        // Clone conversation for the async task
+        let conversation = self.conversation.clone();
+
+        // Create AI client for summarization
+        let client = match self.create_summarization_client() {
+            Some(c) => c,
+            None => {
+                self.popups
+                    .pinch
+                    .set_error("No AI client available for summarization".to_string());
+                return;
+            }
+        };
+
+        // Set up channel for results
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.channels.summarization = Some(rx);
+
+        // Log before moving into async block
+        let msg_count = conversation.len();
+        let file_count = file_contents.len();
+
+        // Spawn async summarization task
+        tokio::spawn(async move {
+            let result = generate_summary(
+                &client,
+                &conversation,
+                preservation_hints.as_deref(),
+                &ranked_files,
+                &file_contents,
+                project_context.as_deref(),
+            )
+            .await;
+
+            let update = SummarizationUpdate {
+                result: result.map_err(|e| e.to_string()),
+            };
+            let _ = tx.send(update);
+        });
+
+        tracing::info!(
+            "Started async summarization with {} messages, {} file contents",
+            msg_count,
+            file_count
+        );
+    }
+
+    /// Read contents of top-ranked files for summarization context
+    fn read_key_file_contents(&self, ranked_files: &[RankedFile]) -> Vec<(String, String)> {
+        ranked_files.iter()
+            .take(10)
+            .filter_map(|file| {
+                let path = if std::path::Path::new(&file.path).is_absolute() {
+                    PathBuf::from(&file.path)
+                } else {
+                    self.working_dir.join(&file.path)
+                };
+                std::fs::read_to_string(&path).ok().map(|content| (file.path.clone(), content))
+            })
+            .collect()
+    }
+
+    /// Read project context file (KRAB.md, CLAUDE.md, AGENTS.md, etc.)
+    fn read_project_context(&self) -> Option<String> {
+        // Support all common AI coding assistant instruction files
+        // Priority: Krusty native > AGENTS.md standard > tool-specific
+        const PROJECT_FILES: &[&str] = &[
+            // Krusty native
+            "KRAB.md",
+            "krab.md",
+            // Unified standard (40k+ repos)
+            "AGENTS.md",
+            "agents.md",
+            // Claude Code
+            "CLAUDE.md",
+            "claude.md",
+            // Cursor
+            ".cursorrules",
+            // Windsurf
+            ".windsurfrules",
+            // Cline
+            ".clinerules",
+            // GitHub Copilot
+            ".github/copilot-instructions.md",
+            // Google Jules
+            "JULES.md",
+            // Gemini
+            "gemini.md",
+        ];
+        for filename in PROJECT_FILES {
+            let path = self.working_dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                tracing::debug!("Loaded project context from {}", filename);
+                return Some(content);
+            }
+        }
+        None
+    }
+
+    /// Create AI client for summarization
+    ///
+    /// Uses same auth as main client. OAuth is supported - the call_with_thinking
+    /// method handles embedding instructions in the user message for OAuth.
+    fn create_summarization_client(&self) -> Option<AnthropicClient> {
+        self.create_ai_client()
+    }
+
+    /// Poll for summarization results
+    pub fn poll_summarization(&mut self) {
+        let rx = match self.channels.summarization.as_mut() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        match rx.try_recv() {
+            Ok(update) => {
+                self.channels.summarization = None;
+
+                match update.result {
+                    Ok(summary) => {
+                        tracing::info!(
+                            "Summarization complete: {}",
+                            &summary.work_summary[..100.min(summary.work_summary.len())]
+                        );
+
+                        // Show summary in popup and move to direction input
+                        self.popups.pinch.show_summary(
+                            summary.work_summary.clone(),
+                            summary.important_files.clone(),
+                        );
+
+                        // Store the full result for use when completing pinch
+                        self.popups.pinch.set_summarization_result(summary);
+                    }
+                    Err(e) => {
+                        tracing::error!("Summarization failed: {}", e);
+                        self.popups
+                            .pinch
+                            .set_error(format!("Summarization failed: {}", e));
+                    }
+                }
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                // Still summarizing
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                // Task failed/cancelled
+                self.channels.summarization = None;
+                self.popups
+                    .pinch
+                    .set_error("Summarization task cancelled".to_string());
+            }
+        }
+    }
+
+    /// Get ranked files for summarization context
+    fn get_ranked_files_for_summarization(&self) -> Vec<RankedFile> {
+        if let (Some(sm), Some(session_id)) = (&self.session_manager, &self.current_session_id) {
+            let tracker = FileActivityTracker::new(sm.db(), session_id.clone());
+            return tracker.get_ranked_files(20).unwrap_or_default();
+        }
+        Vec::new()
+    }
+
+    /// Complete the pinch by creating a linked session
+    pub fn complete_pinch(&mut self) {
+        use crate::tui::popups::pinch::PinchStage;
+
+        // Get summary from popup stage
+        let summary = match &self.popups.pinch.stage {
+            PinchStage::DirectionInput { summary, .. } => summary.clone(),
+            _ => return,
+        };
+
+        let direction = self
+            .popups
+            .pinch
+            .get_direction_input()
+            .map(|s| s.to_string());
+        let preservation_hints = self
+            .popups
+            .pinch
+            .get_preservation_input()
+            .map(|s| s.to_string());
+
+        // Move to creating state
+        self.popups.pinch.start_creating();
+
+        // Get the full AI summarization result (includes key_decisions, pending_tasks, etc.)
+        let summary_result = self
+            .popups
+            .pinch
+            .get_summarization_result()
+            .cloned()
+            .unwrap_or_else(|| SummarizationResult {
+                work_summary: summary.clone(),
+                key_decisions: Vec::new(),
+                pending_tasks: Vec::new(),
+                important_files: Vec::new(),
+            });
+
+        // Build pinch context with FULL context for continuation
+        let ranked_files = self.get_ranked_files_for_summarization();
+
+        // Read project context (CLAUDE.md) - CRITICAL for continuation!
+        let project_context = self.read_project_context();
+
+        // Read top 5 key file contents so Claude doesn't start blind
+        let key_file_contents = self
+            .read_key_file_contents(&ranked_files)
+            .into_iter()
+            .take(5)
+            .collect();
+
+        // Get active plan markdown if one exists
+        let active_plan = self.active_plan.as_ref().map(|p| p.to_markdown());
+
+        let pinch_ctx = PinchContext::new(
+            self.current_session_id.clone().unwrap_or_default(),
+            self.session_title
+                .clone()
+                .unwrap_or_else(|| "Untitled".to_string()),
+            summary_result,
+            ranked_files,
+            preservation_hints,
+            direction.clone(),
+            project_context,
+            key_file_contents,
+            active_plan,
+        );
+
+        // Create linked session
+        let Some(sm) = &self.session_manager else {
+            self.popups
+                .pinch
+                .set_error("No session manager".to_string());
+            return;
+        };
+
+        let Some(parent_id) = &self.current_session_id else {
+            self.popups
+                .pinch
+                .set_error("No current session".to_string());
+            return;
+        };
+
+        // Use fallback title initially, spawn AI generation
+        let parent_title = self
+            .session_title
+            .clone()
+            .unwrap_or_else(|| "Session".to_string());
+        let fallback_title = format!(
+            "{} (cont.)",
+            &parent_title.chars().take(45).collect::<String>()
+        );
+
+        match sm.create_linked_session(
+            &fallback_title,
+            parent_id,
+            &pinch_ctx,
+            Some(&self.current_model),
+            Some(&self.working_dir.to_string_lossy()),
+        ) {
+            Ok(new_id) => {
+                // Save pinch context as first message
+                let system_msg = pinch_ctx.to_system_message();
+                if let Err(e) = sm.save_message(&new_id, "system", &system_msg) {
+                    tracing::warn!("Failed to save pinch message: {}", e);
+                }
+
+                // If direction provided (non-empty), save it as user message (becomes first prompt)
+                let has_direction = direction
+                    .as_ref()
+                    .map(|d| !d.trim().is_empty())
+                    .unwrap_or(false);
+                let auto_continue = has_direction;
+                if let Some(dir) = &direction {
+                    if !dir.trim().is_empty() {
+                        // Save as JSON content array to match normal message format
+                        let content_json =
+                            serde_json::to_string(&vec![crate::ai::types::Content::Text {
+                                text: dir.clone(),
+                            }])
+                            .unwrap_or_else(|_| format!("[\"{}\"]", dir));
+
+                        if let Err(e) = sm.save_message(&new_id, "user", &content_json) {
+                            tracing::warn!("Failed to save direction as user message: {}", e);
+                        }
+                    }
+                }
+
+                // Spawn async AI title generation
+                self.spawn_pinch_title_generation(new_id.clone(), parent_title, summary, direction);
+
+                // Show completion - auto_continue triggers AI response after switch
+                self.popups
+                    .pinch
+                    .complete(new_id, fallback_title, auto_continue);
+            }
+            Err(e) => {
+                self.popups
+                    .pinch
+                    .set_error(format!("Failed to create session: {}", e));
+            }
+        }
+    }
+
+    /// Spawn background task to generate AI title for pinch session
+    fn spawn_pinch_title_generation(
+        &mut self,
+        session_id: String,
+        parent_title: String,
+        summary: String,
+        direction: Option<String>,
+    ) {
+        let client = match self.create_pinch_title_client() {
+            Some(c) => c,
+            None => {
+                tracing::debug!("No AI client available for pinch title generation");
+                return;
+            }
+        };
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.channels.title_update = Some(rx);
+
+        tokio::spawn(async move {
+            let title = crate::ai::generate_pinch_title(
+                &client,
+                &parent_title,
+                &summary,
+                direction.as_deref(),
+            )
+            .await;
+            let _ = tx.send(TitleUpdate { session_id, title });
+        });
+    }
+
+    /// Create AI client for pinch title generation
+    fn create_pinch_title_client(&self) -> Option<AnthropicClient> {
+        self.create_ai_client()
+    }
+}
