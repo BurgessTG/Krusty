@@ -1,16 +1,6 @@
 # Krusty
 
-A terminal-based AI coding assistant powered by Claude.
-
-## Features
-
-- **Multi-provider AI** - Anthropic Claude with OAuth or API key authentication
-- **Zed Extension System** - 100+ language servers via WASM extensions
-- **Tool Execution** - File operations, bash commands, grep, glob patterns
-- **Session Management** - SQLite-backed conversation history
-- **Theming** - Customizable color schemes
-- **Skills** - Modular instructions for domain-specific tasks
-- **Auto-updates** - Built-in update system
+A terminal-based AI coding assistant. Multi-provider, multi-model, with 100+ language servers via Zed extensions.
 
 ## Installation
 
@@ -33,93 +23,142 @@ brew install krusty
 git clone https://github.com/BurgessTG/Krusty.git
 cd Krusty
 cargo build --release
-# Binary at target/release/krusty
+./target/release/krusty
 ```
 
 ### GitHub Releases
 
-Download prebuilt binaries for your platform from [Releases](https://github.com/BurgessTG/Krusty/releases):
+Download prebuilt binaries from [Releases](https://github.com/BurgessTG/Krusty/releases):
 - Linux (x86_64, ARM64)
 - macOS (Intel, Apple Silicon)
 - Windows (x86_64)
 
-### Requirements
+## Supported Providers
 
-- An Anthropic API key or OAuth credentials
+Krusty supports multiple AI providers. Add API keys via `/auth` in the TUI.
 
-## Usage
+| Provider | Models | Notes |
+|----------|--------|-------|
+| **Anthropic** | Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 | Extended thinking, web search |
+| **OpenRouter** | 100+ models (GPT, Gemini, Llama, Claude, etc.) | Pay-per-use aggregator |
+| **OpenCode Zen** | Claude, GPT-5, Gemini, Qwen | Curated for coding |
+| **Z.ai** | GLM 4.7, 4.6, 4.5 | Budget-friendly |
+| **MiniMax** | M2.1 | Fast, interleaved thinking |
+| **Kimi** | K2 | 256K context |
+
+Switch providers and models anytime with `/model` or `Ctrl+M`.
+
+## Controls
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Send message (or newline with Shift) |
+| `Ctrl+C` | Cancel current generation |
+| `Ctrl+L` | Clear screen |
+| `Ctrl+M` | Open model selector |
+| `Ctrl+N` | New session |
+| `Ctrl+P` | Open session picker |
+| `Ctrl+K` | Open command palette |
+| `Esc` | Close popup / Cancel |
+| `Tab` | Autocomplete slash commands |
+| `↑/↓` | Scroll / Navigate history |
+| `PgUp/PgDn` | Scroll messages |
+
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/auth` | Manage API keys for providers |
+| `/model` | Select AI model and provider |
+| `/sessions` | Browse conversation history |
+| `/clear` | Clear current conversation |
+| `/lsp` | Browse and install language servers |
+| `/mcp` | Manage MCP servers |
+| `/hooks` | Configure pre/post tool hooks |
+| `/skills` | Browse available skills |
+| `/theme` | Change color theme |
+| `/processes` | View background processes |
+| `/init` | Initialize project context file |
+| `/compact` | Summarize and compact conversation |
+
+### Mouse
+
+- Click to select text
+- Scroll wheel to navigate
+- Click links to open in browser
+- Click code blocks to copy
+
+## Features
+
+### Multi-Provider AI
+Configure multiple providers and switch between them seamlessly. Your conversation continues even when switching models.
+
+### Language Server Protocol (LSP)
+Install language servers from Zed's extension marketplace for 100+ languages:
 
 ```bash
-# Start the TUI
-krusty
-
-# Or with a specific theme
-krusty -t monokai
-
-# List available themes
-krusty themes
-
-# Manage LSP extensions
-krusty lsp list
 krusty lsp install rust
-krusty lsp status
+krusty lsp install python
+krusty lsp install typescript
 ```
 
-## Authentication
+Or use `/lsp` in the TUI to browse and install interactively.
 
-On first run, use `/auth` in the TUI to authenticate:
+### Tool Execution
+Krusty can execute tools on your behalf:
+- **Read/Write/Edit** - File operations with syntax highlighting
+- **Bash** - Run shell commands with safety prompts
+- **Glob/Grep** - Search files and content
+- **Web Search** - Search the web (Anthropic models)
 
-- **OAuth** (recommended): Browser-based login with Anthropic
-- **API Key**: Direct API key entry
+### Skills
+Modular instruction sets for domain-specific tasks. Add custom skills in `~/.krusty/skills/` or project `.krusty/skills/`.
 
-Credentials are stored locally in `~/.krusty/tokens/`.
+### Sessions
+All conversations are saved locally in SQLite. Resume any session with `/sessions`.
+
+### Themes
+30+ built-in themes. Switch with `/theme` or:
+
+```bash
+krusty -t dracula
+krusty -t tokyo_night
+krusty -t gruvbox_dark
+krusty themes  # List all
+```
+
+### Auto-Updates
+Krusty checks for updates and can self-update.
 
 ## Configuration
 
-Krusty stores data in `~/.krusty/`:
+Data stored in `~/.krusty/`:
 
 ```
 ~/.krusty/
-├── extensions/     # Installed WASM extensions (Zed format)
-├── logs/          # Application logs
-├── tokens/        # OAuth/API credentials
-└── bin/           # Auto-downloaded LSP binaries
+├── credentials.json  # API keys (encrypted)
+├── preferences.json  # Settings
+├── extensions/       # Zed LSP extensions
+├── skills/          # Custom skills
+├── logs/            # Application logs
+└── bin/             # LSP binaries
 ```
 
-## Slash Commands
+### Project Configuration
 
-In the TUI, use these commands:
-
-- `/help` - Show available commands
-- `/auth` - Manage authentication
-- `/lsp` - Browse and install language server extensions
-- `/sessions` - View conversation history
-- `/clear` - Clear current conversation
-- `/model` - Select AI model
-
-## Architecture
-
-```
-crates/
-├── krusty-core/   # Shared library (AI, tools, LSP, storage)
-└── krusty-cli/    # Terminal UI application
-```
-
-Key modules in `krusty-core`:
-- `ai/` - Anthropic Claude API client with streaming
-- `tools/` - Tool execution framework
-- `extensions/` - Zed WASM extension host
-- `lsp/` - Language server protocol client
-- `storage/` - SQLite persistence
+Add a `KRUSTY.md` or `CLAUDE.md` file to your project root for project-specific instructions that are automatically included in context.
 
 ## Development
 
 ```bash
-cargo check           # Quick compilation check
+cargo check           # Type check
 cargo build           # Debug build
 cargo build --release # Release build
 cargo test            # Run tests
-cargo clippy          # Lint check
+cargo clippy          # Lint
 ```
 
 ## License
