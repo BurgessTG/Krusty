@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 use crate::agent::build_context::SharedBuildContext;
 use crate::agent::cache::SharedExploreCache;
 use crate::agent::AgentCancellation;
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, Content, ModelMessage, Role};
 use crate::tools::implementations::{BashTool, EditTool, GlobTool, GrepTool, ReadTool, WriteTool};
@@ -165,7 +165,7 @@ pub struct SubAgentResult {
 
 /// Pool for managing concurrent sub-agent execution
 pub struct SubAgentPool {
-    client: Arc<AnthropicClient>,
+    client: Arc<AiClient>,
     cancellation: AgentCancellation,
     max_concurrency: usize,
     cache: Arc<SharedExploreCache>,
@@ -174,7 +174,7 @@ pub struct SubAgentPool {
 }
 
 impl SubAgentPool {
-    pub fn new(client: Arc<AnthropicClient>, cancellation: AgentCancellation) -> Self {
+    pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
         Self {
             client,
             cancellation,
@@ -768,7 +768,7 @@ impl BuilderTools {
 
 /// Execute a sub-agent with agentic tool loop
 async fn execute_subagent_with_tools(
-    client: &AnthropicClient,
+    client: &AiClient,
     task: SubAgentTask,
     model: &str,
     cancellation: CancellationToken,
@@ -953,7 +953,7 @@ async fn execute_subagent_with_tools(
 
 /// Execute a sub-agent with progress reporting
 async fn execute_subagent_with_progress(
-    client: &AnthropicClient,
+    client: &AiClient,
     task: SubAgentTask,
     model: &str,
     cancellation: CancellationToken,
@@ -1224,7 +1224,7 @@ struct ToolCall {
 
 /// Make a non-streaming API call for sub-agent with timeout
 async fn call_subagent_api(
-    client: &AnthropicClient,
+    client: &AiClient,
     model: &str,
     system: &str,
     messages: &[ModelMessage],
@@ -1365,7 +1365,7 @@ fn builder_system_prompt(working_dir: &std::path::Path, context: &SharedBuildCon
 
 /// Execute a builder agent with progress reporting
 async fn execute_builder_with_progress(
-    client: &AnthropicClient,
+    client: &AiClient,
     task: SubAgentTask,
     model: &str,
     cancellation: CancellationToken,

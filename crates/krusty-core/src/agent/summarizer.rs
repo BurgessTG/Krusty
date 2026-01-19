@@ -1,20 +1,25 @@
 //! AI-powered conversation summarization for pinch
 //!
-//! Uses Sonnet 4.5 with extended thinking to analyze full conversation
-//! history and produce a structured summary for the next session.
+//! Uses extended thinking when available (Anthropic) or falls back to
+//! simple API calls for other providers. Produces a structured summary
+//! for the next session.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::ai::anthropic::client::AnthropicClient;
+use crate::ai::client::AiClient;
+use crate::ai::providers::ProviderId;
 use crate::ai::types::{Content, ModelMessage, Role};
 use crate::storage::RankedFile;
 
-/// Sonnet 4.5 for deep summarization with extended context
-const SUMMARIZATION_MODEL: &str = "claude-sonnet-4-5-20250929";
+/// Default Sonnet model for Anthropic summarization with extended thinking
+const ANTHROPIC_SUMMARIZATION_MODEL: &str = "claude-sonnet-4-5-20250929";
 
-/// Extended thinking budget for thorough analysis
+/// Extended thinking budget for thorough analysis (Anthropic only)
 const THINKING_BUDGET: u32 = 32000;
+
+/// Max tokens for non-thinking summarization calls
+const SUMMARIZATION_MAX_TOKENS: usize = 4000;
 
 /// System prompt for summarization
 const SUMMARIZATION_SYSTEM_PROMPT: &str = r#"You are a specialized summarization agent for pinch (context continuation) between coding sessions.
@@ -248,14 +253,18 @@ fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
     }
 }
 
-/// Generate a summary using Sonnet 4.5 with extended thinking
+/// Generate a summary using the appropriate method for the provider
+///
+/// For Anthropic: Uses Sonnet 4.5 with extended thinking for deep analysis
+/// For other providers: Uses the current model with a simple call
 pub async fn generate_summary(
-    client: &AnthropicClient,
+    client: &AiClient,
     conversation: &[ModelMessage],
     preservation_hints: Option<&str>,
     ranked_files: &[RankedFile],
     file_contents: &[(String, String)],
     project_context: Option<&str>,
+    current_model: Option<&str>,
 ) -> Result<SummarizationResult> {
     let prompt = build_summarization_prompt(
         conversation,
@@ -271,17 +280,48 @@ pub async fn generate_summary(
         file_contents.len()
     );
 
-    let response = client
-        .call_with_thinking(
-            SUMMARIZATION_MODEL,
-            SUMMARIZATION_SYSTEM_PROMPT,
-            &prompt,
-            THINKING_BUDGET,
-        )
-        .await?;
+    let provider = client.provider_id();
+    let response = if provider == ProviderId::Anthropic {
+        // Anthropic: Use extended thinking for deep analysis
+        tracing::info!(
+            "Using extended thinking with model {}",
+            ANTHROPIC_SUMMARIZATION_MODEL
+        );
+        client
+            .call_with_thinking(
+                ANTHROPIC_SUMMARIZATION_MODEL,
+                SUMMARIZATION_SYSTEM_PROMPT,
+                &prompt,
+                THINKING_BUDGET,
+            )
+            .await?
+    } else {
+        // Other providers: Use simple call with current model
+        let model = current_model.unwrap_or_else(|| get_fallback_model(provider));
+        tracing::info!(
+            "Using simple call with model {} for provider {:?}",
+            model,
+            provider
+        );
+        client
+            .call_simple(model, SUMMARIZATION_SYSTEM_PROMPT, &prompt, SUMMARIZATION_MAX_TOKENS)
+            .await?
+    };
 
     // Parse the JSON response
     parse_summary_response(&response)
+}
+
+/// Get a reasonable fallback model for summarization based on provider
+fn get_fallback_model(provider: ProviderId) -> &'static str {
+    match provider {
+        ProviderId::Anthropic => ANTHROPIC_SUMMARIZATION_MODEL,
+        ProviderId::OpenRouter => "anthropic/claude-3.5-haiku", // Fast and cheap on OpenRouter
+        ProviderId::OpenCodeZen => "minimax-m2.1-free",         // Free tier model
+        ProviderId::ZAi => "glm-4.5-flash",                     // Fast GLM model
+        ProviderId::MiniMax => "MiniMax-M2.1",                  // MiniMax default
+        ProviderId::Kimi => "kimi-k2",                          // Kimi default
+    }
 }
 
 /// Parse the JSON response from the summarization AI

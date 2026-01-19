@@ -5,7 +5,7 @@
 use tokio::sync::mpsc;
 
 use crate::agent::{AgentEvent, InterruptReason};
-use crate::ai::anthropic::CallOptions;
+use crate::ai::client::CallOptions;
 use crate::ai::streaming::StreamPart;
 use crate::ai::types::{
     AiToolCall, Content, ContextManagement, ModelMessage, Role, ThinkingConfig, WebFetchConfig,

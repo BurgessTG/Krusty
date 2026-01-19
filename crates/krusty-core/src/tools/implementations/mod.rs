@@ -44,7 +44,7 @@ pub use task_complete::TaskCompleteTool;
 pub use write::WriteTool;
 
 use crate::agent::AgentCancellation;
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::lsp::LspManager;
 use crate::tools::registry::ToolRegistry;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ pub async fn register_all_tools(registry: &ToolRegistry, _lsp_manager: Option<Ar
 /// Call this after authentication when the client is available.
 pub async fn register_explore_tool(
     registry: &ToolRegistry,
-    client: Arc<AnthropicClient>,
+    client: Arc<AiClient>,
     cancellation: AgentCancellation,
 ) {
     registry
@@ -82,7 +82,7 @@ pub async fn register_explore_tool(
 /// Call this after authentication when the client is available.
 pub async fn register_build_tool(
     registry: &ToolRegistry,
-    client: Arc<AnthropicClient>,
+    client: Arc<AiClient>,
     cancellation: AgentCancellation,
 ) {
     registry

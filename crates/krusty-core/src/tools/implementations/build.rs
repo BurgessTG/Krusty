@@ -11,17 +11,17 @@ use tracing::{debug, info, warn};
 
 use crate::agent::subagent::{SubAgentModel, SubAgentPool, SubAgentTask};
 use crate::agent::{AgentCancellation, SharedBuildContext};
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::tools::registry::{Tool, ToolContext, ToolResult};
 
 /// Build tool for spawning parallel Opus builder agents
 pub struct BuildTool {
-    client: Arc<AnthropicClient>,
+    client: Arc<AiClient>,
     cancellation: AgentCancellation,
 }
 
 impl BuildTool {
-    pub fn new(client: Arc<AnthropicClient>, cancellation: AgentCancellation) -> Self {
+    pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
         Self {
             client,
             cancellation,

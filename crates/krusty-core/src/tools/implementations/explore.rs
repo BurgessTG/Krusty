@@ -11,17 +11,17 @@ use tracing::{debug, info, warn};
 
 use crate::agent::subagent::{SubAgentPool, SubAgentTask};
 use crate::agent::AgentCancellation;
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::tools::registry::{Tool, ToolContext, ToolResult};
 
 /// Explore tool for spawning parallel sub-agents
 pub struct ExploreTool {
-    client: Arc<AnthropicClient>,
+    client: Arc<AiClient>,
     cancellation: AgentCancellation,
 }
 
 impl ExploreTool {
-    pub fn new(client: Arc<AnthropicClient>, cancellation: AgentCancellation) -> Self {
+    pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
         Self {
             client,
             cancellation,

@@ -2374,6 +2374,7 @@ dependencies = [
  "git2",
  "glob",
  "hmac",
+ "httpdate",
  "ignore",
  "image",
  "lsp-types",

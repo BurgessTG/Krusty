@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use crate::agent::{generate_summary, PinchContext, SummarizationResult};
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::storage::{FileActivityTracker, RankedFile};
 use crate::tui::app::App;
 use crate::tui::utils::{SummarizationUpdate, TitleUpdate};
@@ -45,6 +45,9 @@ impl App {
         // Clone conversation for the async task
         let conversation = self.conversation.clone();
 
+        // Capture current model for summarization
+        let current_model = self.current_model.clone();
+
         // Create AI client for summarization
         let client = match self.create_summarization_client() {
             Some(c) => c,
@@ -73,6 +76,7 @@ impl App {
                 &ranked_files,
                 &file_contents,
                 project_context.as_deref(),
+                Some(&current_model),
             )
             .await;
 
@@ -135,7 +139,7 @@ impl App {
     }
 
     /// Create AI client for summarization
-    fn create_summarization_client(&self) -> Option<AnthropicClient> {
+    fn create_summarization_client(&self) -> Option<AiClient> {
         self.create_ai_client()
     }
 
@@ -371,7 +375,7 @@ impl App {
     }
 
     /// Create AI client for pinch title generation
-    fn create_pinch_title_client(&self) -> Option<AnthropicClient> {
+    fn create_pinch_title_client(&self) -> Option<AiClient> {
         self.create_ai_client()
     }
 }

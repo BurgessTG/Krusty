@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::ai::types::{Content, ModelMessage, Role};
 use crate::storage::SessionManager;
 use crate::tui::app::App;
@@ -72,7 +72,7 @@ impl App {
     }
 
     /// Create AI client for title generation
-    fn create_title_client(&self) -> Option<AnthropicClient> {
+    fn create_title_client(&self) -> Option<AiClient> {
         self.create_ai_client()
     }
 

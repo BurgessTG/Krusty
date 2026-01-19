@@ -25,7 +25,7 @@ use crate::agent::{
     AgentCancellation, AgentConfig, AgentEventBus, AgentState, UserHookManager, UserPostToolHook,
     UserPreToolHook,
 };
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::client::AiClient;
 use crate::ai::models::{create_model_registry, SharedModelRegistry};
 use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, AiToolCall, Content, ModelMessage};
@@ -131,7 +131,7 @@ pub struct App {
     pub context_tokens_used: usize,
 
     // AI client
-    pub ai_client: Option<AnthropicClient>,
+    pub ai_client: Option<AiClient>,
     pub api_key: Option<String>,
 
     // Multi-provider support
@@ -242,6 +242,8 @@ pub struct App {
 
     // Auto-updater state
     pub update_status: Option<krusty_core::updater::UpdateStatus>,
+    /// Path to the krusty repo (for self-update)
+    #[allow(dead_code)] // Infrastructure for future auto-update feature
     pub update_repo_path: Option<PathBuf>,
 
     // Dirty-tracking for render optimization
@@ -953,7 +955,7 @@ impl App {
         // Try credential store for all providers (unified API key storage)
         if let Some(key) = self.credential_store.get(&self.active_provider).cloned() {
             let config = self.create_client_config();
-            self.ai_client = Some(AnthropicClient::with_api_key(config, key.clone()));
+            self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
             self.register_explore_tool_if_client().await;
             return Ok(());
@@ -990,7 +992,7 @@ impl App {
     }
 
     /// Create AnthropicConfig for the current active provider
-    pub fn create_client_config(&self) -> crate::ai::anthropic::AnthropicConfig {
+    pub fn create_client_config(&self) -> crate::ai::client::AiClientConfig {
         use crate::ai::models::ApiFormat;
         use crate::ai::providers::get_provider;
 
@@ -1004,7 +1006,7 @@ impl App {
             .map(|m| m.api_format)
             .unwrap_or(ApiFormat::Anthropic);
 
-        crate::ai::anthropic::AnthropicConfig {
+        crate::ai::client::AiClientConfig {
             model: self.current_model.clone(),
             max_tokens: crate::constants::ai::MAX_OUTPUT_TOKENS,
             base_url: Some(provider.base_url.clone()),
@@ -1015,18 +1017,18 @@ impl App {
     }
 
     /// Create an AI client with the current provider configuration
-    pub fn create_ai_client(&self) -> Option<AnthropicClient> {
+    pub fn create_ai_client(&self) -> Option<AiClient> {
         let config = self.create_client_config();
         self.api_key
             .as_ref()
-            .map(|key| AnthropicClient::with_api_key(config, key.clone()))
+            .map(|key| AiClient::with_api_key(config, key.clone()))
     }
 
     /// Set API key for current provider and create client
     pub fn set_api_key(&mut self, key: String) {
         // Create client with provider config
         let config = self.create_client_config();
-        self.ai_client = Some(AnthropicClient::with_api_key(config, key.clone()));
+        self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
         self.api_key = Some(key.clone());
 
         // Save to credential store (unified storage for all providers)
@@ -1094,7 +1096,7 @@ impl App {
         // Try to load credentials for the new provider
         if let Some(key) = self.credential_store.get(&provider_id).cloned() {
             let config = self.create_client_config();
-            self.ai_client = Some(AnthropicClient::with_api_key(config, key.clone()));
+            self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
             tracing::info!("Switched to provider {} (loaded existing key)", provider_id);
         } else {

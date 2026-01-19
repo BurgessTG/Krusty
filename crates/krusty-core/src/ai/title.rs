@@ -2,7 +2,7 @@
 //!
 //! Uses a fast/cheap model for concise title generation.
 
-use super::anthropic::client::AnthropicClient;
+use super::client::AiClient;
 use super::providers::ProviderId;
 
 /// Get the fast/cheap model ID for title generation based on provider
@@ -32,7 +32,7 @@ Rules:
 ///
 /// Uses a fast/cheap model for title generation.
 /// Falls back to truncation if API call fails.
-pub async fn generate_title(client: &AnthropicClient, first_message: &str) -> String {
+pub async fn generate_title(client: &AiClient, first_message: &str) -> String {
     // Truncate input to avoid wasting tokens on very long messages
     let truncated: String = first_message.chars().take(500).collect();
 
@@ -81,7 +81,7 @@ Rules:
 /// Uses summary and user direction to create a meaningful title
 /// for the continuation session.
 pub async fn generate_pinch_title(
-    client: &AnthropicClient,
+    client: &AiClient,
     parent_title: &str,
     summary: &str,
     direction: Option<&str>,

@@ -65,6 +65,7 @@ dirs = "6.0"
 # URL/Web
 url = "2.5"
 tiny_http = "0.12"
+httpdate = "1.0"
 
 # Utilities
 which = "7.0"

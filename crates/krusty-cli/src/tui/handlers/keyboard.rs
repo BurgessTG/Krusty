@@ -164,14 +164,11 @@ impl App {
 
         // Route paste to auth popup if active and in input state
         if let Popup::Auth = &self.popup {
-            match &self.popups.auth.state {
-                AuthState::ApiKeyInput { .. } => {
-                    for c in text.trim().chars() {
-                        self.popups.auth.add_api_key_char(c);
-                    }
-                    return;
+            if let AuthState::ApiKeyInput { .. } = &self.popups.auth.state {
+                for c in text.trim().chars() {
+                    self.popups.auth.add_api_key_char(c);
                 }
-                _ => {}
+                return;
             }
         }
 

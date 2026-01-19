@@ -98,11 +98,8 @@ impl AuthPopup {
 
     /// Go back to provider selection
     pub fn go_back(&mut self) {
-        match &self.state {
-            AuthState::ApiKeyInput { .. } => {
-                self.state = AuthState::ProviderSelection { selected_index: 0 };
-            }
-            _ => {}
+        if let AuthState::ApiKeyInput { .. } = &self.state {
+            self.state = AuthState::ProviderSelection { selected_index: 0 };
         }
     }
 
@@ -126,29 +123,10 @@ impl AuthPopup {
         }
     }
 
-    /// Get current provider being configured
-    pub fn get_current_provider(&self) -> Option<ProviderId> {
-        match &self.state {
-            AuthState::ApiKeyInput { provider, .. } => Some(*provider),
-            AuthState::Complete { provider } => Some(*provider),
-            _ => None,
-        }
-    }
-
     /// Mark API key as successfully saved
     pub fn set_api_key_complete(&mut self) {
         if let AuthState::ApiKeyInput { provider, .. } = &self.state {
             self.state = AuthState::Complete { provider: *provider };
-        }
-    }
-
-    /// Set error message for API key input
-    pub fn set_api_key_error(&mut self, error: String) {
-        if let AuthState::ApiKeyInput {
-            error: err_field, ..
-        } = &mut self.state
-        {
-            *err_field = Some(error);
         }
     }
 
