@@ -217,6 +217,7 @@ impl App {
         match self.input.handle_key(code, modifiers) {
             InputAction::Submit(text) => {
                 if !text.is_empty() {
+                    self.input.clear();
                     self.autocomplete.hide();
                     self.handle_input_submit(text);
                 }
@@ -336,9 +337,17 @@ impl App {
                             self.handle_decision_prompt_complete();
                         }
                     }
-                } else if !text.is_empty() && !self.is_busy() {
-                    self.autocomplete.hide();
-                    self.handle_input_submit(text);
+                } else if !text.is_empty() {
+                    if self.is_busy() {
+                        self.messages.push((
+                            "system".to_string(),
+                            "Please wait for the current response to complete.".to_string(),
+                        ));
+                    } else {
+                        self.input.clear();
+                        self.autocomplete.hide();
+                        self.handle_input_submit(text);
+                    }
                 }
             }
             InputAction::ImagePasted {

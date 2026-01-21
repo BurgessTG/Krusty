@@ -45,12 +45,12 @@ impl MultiLineInput {
                 InputAction::ContentChanged
             }
             // Plain Enter submits (if not empty/whitespace-only)
+            // Don't clear here - let caller clear after validation succeeds
             KeyCode::Enter => {
                 let content = self.content().to_string();
                 if content.trim().is_empty() {
                     return InputAction::Continue;
                 }
-                self.clear();
                 InputAction::Submit(content)
             }
             // Ctrl+W - delete word backwards
@@ -113,6 +113,7 @@ impl MultiLineInput {
             }
             KeyCode::Backspace => {
                 if self.cursor_position > 0 {
+                    self.invalidate_cache();
                     let mut char_start = self.cursor_position - 1;
                     while char_start > 0 && !self.content.is_char_boundary(char_start) {
                         char_start -= 1;
@@ -128,6 +129,7 @@ impl MultiLineInput {
             }
             KeyCode::Delete => {
                 if self.cursor_position < self.content.len() {
+                    self.invalidate_cache();
                     let mut char_end = self.cursor_position + 1;
                     while char_end < self.content.len() && !self.content.is_char_boundary(char_end)
                     {
@@ -169,6 +171,7 @@ impl MultiLineInput {
     }
 
     pub(super) fn insert_char_impl(&mut self, ch: char) {
+        self.invalidate_cache();
         self.content.insert(self.cursor_position, ch);
         self.cursor_position += ch.len_utf8();
         self.update_visual_cursor();
@@ -176,6 +179,7 @@ impl MultiLineInput {
     }
 
     pub(super) fn insert_text_impl(&mut self, text: &str) {
+        self.invalidate_cache();
         self.content.insert_str(self.cursor_position, text);
         self.cursor_position += text.len();
         self.update_visual_cursor();
@@ -241,6 +245,7 @@ impl MultiLineInput {
         if let Some(current_line) = lines.get(line_idx) {
             let line_end_pos = self.get_byte_position_from_visual(line_idx, current_line.len());
             if line_end_pos > self.cursor_position {
+                self.invalidate_cache();
                 self.content.drain(self.cursor_position..line_end_pos);
                 self.update_visual_cursor();
             }
@@ -279,6 +284,7 @@ impl MultiLineInput {
         }
 
         if new_pos < self.cursor_position {
+            self.invalidate_cache();
             self.content.drain(new_pos..self.cursor_position);
             self.cursor_position = new_pos;
             self.update_visual_cursor();

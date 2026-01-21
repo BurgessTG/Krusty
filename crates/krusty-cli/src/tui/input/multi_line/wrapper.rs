@@ -6,6 +6,22 @@ use super::MultiLineInput;
 
 impl MultiLineInput {
     pub(super) fn get_wrapped_lines_impl(&self) -> Vec<String> {
+        // Check cache first
+        if let Some(cached) = self.wrapped_lines_cache.borrow().as_ref() {
+            return cached.clone();
+        }
+
+        // Compute wrapped lines
+        let lines = self.compute_wrapped_lines();
+
+        // Store in cache
+        *self.wrapped_lines_cache.borrow_mut() = Some(lines.clone());
+
+        lines
+    }
+
+    /// Compute wrapped lines without caching (used by cache population)
+    fn compute_wrapped_lines(&self) -> Vec<String> {
         if self.content.is_empty() {
             return vec![String::new()];
         }

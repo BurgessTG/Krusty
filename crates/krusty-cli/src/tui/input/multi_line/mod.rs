@@ -1,13 +1,17 @@
 //! Multi-line input handler with proper text wrapping and cursor management
 
+use std::cell::RefCell;
+
 use crossterm::event::{KeyCode, KeyModifiers};
 
 mod editor;
+mod patterns;
 mod renderer;
 mod viewport;
 mod wrapper;
 
 pub use editor::InputAction;
+pub(crate) use patterns::FILE_REF_PATTERN;
 
 /// Multi-line input handler with proper text wrapping and cursor management
 pub struct MultiLineInput {
@@ -23,6 +27,8 @@ pub struct MultiLineInput {
     pub(crate) viewport_offset: usize,
     /// Maximum visible lines
     pub(crate) max_visible_lines: u16,
+    /// Cached wrapped lines (invalidated on content/width change)
+    wrapped_lines_cache: RefCell<Option<Vec<String>>>,
 }
 
 impl MultiLineInput {
@@ -34,12 +40,25 @@ impl MultiLineInput {
             width: 80,
             viewport_offset: 0,
             max_visible_lines,
+            wrapped_lines_cache: RefCell::new(None),
         }
+    }
+
+    /// Invalidate the wrapped lines cache (call when content or width changes)
+    pub(crate) fn invalidate_cache(&self) {
+        *self.wrapped_lines_cache.borrow_mut() = None;
     }
 
     pub fn set_width(&mut self, width: u16) {
         // Account for borders + padding + scrollbar
-        self.width = width.saturating_sub(4).max(10);
+        let new_width = width.saturating_sub(4).max(10);
+        if self.width != new_width {
+            self.width = new_width;
+            self.invalidate_cache();
+            // Recalculate cursor position after width change affects wrapping
+            self.update_visual_cursor();
+            self.ensure_cursor_visible();
+        }
     }
 
     pub fn clear(&mut self) {
@@ -47,6 +66,7 @@ impl MultiLineInput {
         self.cursor_position = 0;
         self.cursor_visual = (0, 0);
         self.viewport_offset = 0;
+        self.invalidate_cache();
     }
 
     pub fn content(&self) -> &str {
@@ -116,13 +136,6 @@ impl MultiLineInput {
         x: u16,
         y: u16,
     ) -> Option<(usize, usize, std::path::PathBuf)> {
-        use regex::Regex;
-        use std::sync::LazyLock;
-
-        // Pattern for bracketed file paths
-        static BRACKET_PATTERN: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\[([^\]]+\.(png|jpe?g|gif|webp|pdf))\]").unwrap());
-
         // Convert click to byte position
         let content_x = x.saturating_sub(1) as usize;
         let content_y = y.saturating_sub(1) as usize;
@@ -148,8 +161,8 @@ impl MultiLineInput {
             }
         }
 
-        // Find bracketed file refs in content
-        for caps in BRACKET_PATTERN.captures_iter(&self.content) {
+        // Find bracketed file refs in content using shared pattern
+        for caps in FILE_REF_PATTERN.captures_iter(&self.content) {
             let m = caps.get(0)?;
             let path_str = caps.get(1)?.as_str();
 
@@ -172,13 +185,7 @@ impl MultiLineInput {
     /// Get all file reference ranges in content for styling
     /// Returns vec of (byte_start, byte_end) for each file reference
     pub fn get_file_ref_ranges(&self) -> Vec<(usize, usize)> {
-        use regex::Regex;
-        use std::sync::LazyLock;
-
-        static BRACKET_PATTERN: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"\[([^\]]+\.(png|jpe?g|gif|webp|pdf))\]").unwrap());
-
-        BRACKET_PATTERN
+        FILE_REF_PATTERN
             .find_iter(&self.content)
             .map(|m| (m.start(), m.end()))
             .collect()

@@ -56,6 +56,7 @@ impl App {
 
         // Check if authenticated
         if !self.is_authenticated() {
+            self.input.insert_text(&text); // Restore the text since input was cleared
             self.messages.push((
                 "system".to_string(),
                 "Not authenticated. Use /auth to set up API key.".to_string(),

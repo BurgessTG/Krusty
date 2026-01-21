@@ -156,13 +156,9 @@ fn render_line_with_file_refs(
 
 /// Find bracket ranges in a line that look like file paths
 fn find_bracket_ranges(line: &str) -> Vec<(usize, usize)> {
-    use regex::Regex;
-    use std::sync::LazyLock;
+    use super::patterns::FILE_REF_PATTERN;
 
-    static BRACKET_PATTERN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[[^\]]+\.(png|jpe?g|gif|webp|pdf)\]").unwrap());
-
-    BRACKET_PATTERN
+    FILE_REF_PATTERN
         .find_iter(line)
         .map(|m| (m.start(), m.end()))
         .collect()
