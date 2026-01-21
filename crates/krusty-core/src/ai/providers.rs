@@ -423,9 +423,11 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
                 ),
                 ModelInfo::new("anthropic/claude-opus-4", "Claude Opus 4", 200_000, 16_384),
                 // OpenAI models
-                ModelInfo::new("openai/gpt-4.1", "GPT-4.1", 1_000_000, 32_768),
-                ModelInfo::new("openai/gpt-4.1-mini", "GPT-4.1 Mini", 1_000_000, 16_384),
-                ModelInfo::new("openai/gpt-4.5-preview", "GPT-4.5 Preview", 128_000, 16_384),
+                ModelInfo::new("openai/gpt-5.2", "GPT-5.2", 400_000, 128_000),
+                ModelInfo::new("openai/gpt-5.2-instant", "GPT-5.2 Instant", 400_000, 128_000),
+                ModelInfo::new("openai/gpt-5.2-thinking", "GPT-5.2 Thinking", 400_000, 128_000),
+                ModelInfo::new("openai/gpt-5.2-pro", "GPT-5.2 Pro", 400_000, 128_000),
+                ModelInfo::new("openai/gpt-5.2-codex", "GPT-5.2 Codex", 400_000, 128_000),
                 ModelInfo::new("openai/o3", "OpenAI o3", 200_000, 100_000),
                 ModelInfo::new("openai/o4-mini", "OpenAI o4-mini", 200_000, 100_000),
                 // Google models
@@ -492,9 +494,10 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
                 ModelInfo::new("claude-sonnet-4", "Claude Sonnet 4", 200_000, 8_192),
                 ModelInfo::new("claude-haiku-4-5", "Claude Haiku 4.5", 200_000, 16_384),
                 // GPT models
-                ModelInfo::new("gpt-4.1", "GPT-4.1", 1_000_000, 32_768),
-                ModelInfo::new("gpt-4.1-mini", "GPT-4.1 Mini", 1_000_000, 16_384),
-                ModelInfo::new("gpt-4.5-preview", "GPT-4.5 Preview", 128_000, 16_384),
+                ModelInfo::new("gpt-5.2", "GPT-5.2", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-instant", "GPT-5.2 Instant", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-thinking", "GPT-5.2 Thinking", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-codex", "GPT-5.2 Codex", 400_000, 128_000),
                 // Gemini models
                 ModelInfo::new("gemini-2.5-pro", "Gemini 2.5 Pro", 1_000_000, 65_536),
                 ModelInfo::new("gemini-2.5-flash", "Gemini 2.5 Flash", 1_000_000, 65_536),
