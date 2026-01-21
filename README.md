@@ -159,6 +159,21 @@ cargo build           # Debug build
 cargo build --release # Release build
 cargo test            # Run tests
 cargo clippy          # Lint
+cargo fmt             # Format code
+```
+
+### Git Hooks
+
+Install the pre-commit hook to automatically check formatting before commits:
+
+```bash
+cp .githooks/pre-commit .git/hooks/pre-commit
+```
+
+Or configure git to use the `.githooks` directory:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## License
