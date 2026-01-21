@@ -6,7 +6,7 @@
 ·▀  ▀.▀  ▀ ▀▀▀  ▀▀▀▀  ▀▀▀   ▀ •
 ```
 
-A terminal-based AI coding assistant. Multi-provider, multi-model, with 100+ language servers via Zed extensions.
+A terminal-based AI coding assistant. 
 
 ## Installation
 
