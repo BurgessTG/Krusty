@@ -1,4 +1,10 @@
-# Krusty
+```
+▄ •▄ ▄▄▄  ▄• ▄▌.▄▄ · ▄▄▄▄▄ ▄· ▄▌
+█▌▄▌▪▀▄ █·█▪██▌▐█ ▀. •██  ▐█▪██▌
+▐▀▀▄·▐▀▀▄ █▌▐█▌▄▀▀▀█▄ ▐█.▪▐█▌▐█▪
+▐█.█▌▐█•█▌▐█▄█▌▐█▄▪▐█ ▐█▌· ▐█▀·.
+·▀  ▀.▀  ▀ ▀▀▀  ▀▀▀▀  ▀▀▀   ▀ •
+```
 
 A terminal-based AI coding assistant. Multi-provider, multi-model, with 100+ language servers via Zed extensions.
 
@@ -33,18 +39,37 @@ Download prebuilt binaries from [Releases](https://github.com/BurgessTG/Krusty/r
 - macOS (Intel, Apple Silicon)
 - Windows (x86_64)
 
+## Usage
+
+```bash
+krusty [OPTIONS] [COMMAND]
+
+Options:
+  -d, --directory <DIR>  Working directory (defaults to current)
+  -t, --theme <THEME>    Theme name (default: krusty)
+  --acp                  Run as ACP server for IDE integration
+
+Commands:
+  chat                   Start interactive TUI chat (default)
+  themes                 List all available themes
+  lsp <ACTION>          Language server management (list, install, remove, status)
+  auth                   Show authentication provider links
+```
+
+Default model: `claude-opus-4-5-20251101` (200K context, 16K output)
+
 ## Supported Providers
 
 Krusty supports multiple AI providers. Add API keys via `/auth` in the TUI.
 
 | Provider | Models | Notes |
 |----------|--------|-------|
-| **Anthropic** | Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 | Extended thinking, web search |
+| **Anthropic** | Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 | Extended thinking, web search/fetch |
 | **OpenRouter** | 100+ models (GPT, Gemini, Llama, Claude, etc.) | Pay-per-use aggregator |
-| **OpenCode Zen** | Claude, GPT-5, Gemini, Qwen | Curated for coding |
-| **Z.ai** | GLM 4.7, 4.6, 4.5 | Budget-friendly |
-| **MiniMax** | M2.1 | Fast, interleaved thinking |
-| **Kimi** | K2 | 256K context |
+| **OpenCode Zen** | Claude, GPT-4, Gemini | Curated for coding, web search |
+| **Z.ai** | GLM-4 | Budget-friendly |
+| **MiniMax** | MiniMax-01 | Fast, interleaved thinking |
+| **Kimi** | K2, K2.5 | 256K context |
 
 Switch providers and models anytime with `/model` or `Ctrl+M`.
 
@@ -54,15 +79,22 @@ Switch providers and models anytime with `/model` or `Ctrl+M`.
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send message (or newline with Shift) |
+| `Enter` | Send message |
+| `Shift+Enter` | New line in input |
 | `Ctrl+C` | Cancel current generation |
 | `Ctrl+L` | Clear screen |
 | `Ctrl+M` | Open model selector |
 | `Ctrl+N` | New session |
-| `Ctrl+P` | Open session picker |
+| `Ctrl+P` | View background processes |
 | `Ctrl+K` | Open command palette |
+| `Ctrl+B` | Toggle BUILD/PLAN mode |
+| `Ctrl+T` | Toggle plan sidebar |
+| `Ctrl+Q` | Quit application |
+| `Ctrl+V` | Paste text or image |
+| `Ctrl+W` | Delete word |
+| `Tab` | Toggle extended thinking |
 | `Esc` | Close popup / Cancel |
-| `Tab` | Autocomplete slash commands |
+| `@` | Search and attach files |
 | `↑/↓` | Scroll / Navigate history |
 | `PgUp/PgDn` | Scroll messages |
 
@@ -70,19 +102,21 @@ Switch providers and models anytime with `/model` or `Ctrl+M`.
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show all commands |
-| `/auth` | Manage API keys for providers |
+| `/home` | Return to start menu |
+| `/load` | Load previous session (filtered by directory) |
 | `/model` | Select AI model and provider |
-| `/sessions` | Browse conversation history |
+| `/auth` | Manage API keys for providers |
+| `/theme` | Change color theme |
 | `/clear` | Clear current conversation |
+| `/pinch` | Compress context to new session |
+| `/plan` | View and manage active plan |
 | `/lsp` | Browse and install language servers |
 | `/mcp` | Manage MCP servers |
-| `/hooks` | Configure pre/post tool hooks |
 | `/skills` | Browse available skills |
-| `/theme` | Change color theme |
-| `/processes` | View background processes |
-| `/init` | Initialize project context file |
-| `/compact` | Summarize and compact conversation |
+| `/ps` | View background processes |
+| `/terminal` | Open interactive terminal |
+| `/init` | Generate KRAB.md project context file |
+| `/cmd` | Show command help popup |
 
 ### Mouse
 
@@ -110,18 +144,39 @@ Or use `/lsp` in the TUI to browse and install interactively.
 ### Tool Execution
 Krusty can execute tools on your behalf:
 - **Read/Write/Edit** - File operations with syntax highlighting
-- **Bash** - Run shell commands with safety prompts
-- **Glob/Grep** - Search files and content
-- **Web Search** - Search the web (Anthropic models)
+- **Bash** - Run shell commands with streaming output
+- **Glob/Grep** - Search files and content (ripgrep-powered)
+- **Explore** - Spawn parallel sub-agents for codebase analysis
+- **Build** - Parallel task execution for complex operations
+- **Web Search/Fetch** - Search and fetch web content (Anthropic models)
+
+### Plan/Build Mode
+Toggle between structured planning and execution modes with `Ctrl+B`:
+- **Plan Mode** - Restricts write operations, focuses on task planning with phases and tasks
+- **Build Mode** - Enables all tools for execution of approved plans
+
+Plans are stored as markdown in `~/.krusty/plans/` and can be managed with `/plan`.
+
+### Extended Thinking
+Toggle extended thinking with `Tab` for deeper reasoning on complex tasks. Supports:
+- Anthropic models (32K token budget)
+- OpenAI-compatible models (reasoning_effort: high)
+- DeepSeek models (reasoning.enabled)
+
+### Terminal Integration
+Open an interactive terminal session with `/terminal` (or `/term`, `/shell`) for direct shell access within the TUI.
+
+### Context Compression
+Use `/pinch` to compress long conversations into a new session with summarized context, preserving essential information while reducing token usage.
 
 ### Skills
 Modular instruction sets for domain-specific tasks. Add custom skills in `~/.krusty/skills/` or project `.krusty/skills/`.
 
 ### Sessions
-All conversations are saved locally in SQLite. Resume any session with `/sessions`.
+All conversations are saved locally in SQLite. Resume any session with `/load` (filtered by current directory).
 
 ### Themes
-30+ built-in themes. Switch with `/theme` or:
+31 built-in themes including krusty (default), tokyo_night, dracula, catppuccin_mocha, gruvbox_dark, nord, one_dark, solarized_dark, synthwave_84, monokai, rosepine, and more. Switch with `/theme` or:
 
 ```bash
 krusty -t dracula
@@ -140,16 +195,21 @@ Data stored in `~/.krusty/`:
 ```
 ~/.krusty/
 ├── credentials.json  # API keys (encrypted)
-├── preferences.json  # Settings
-├── extensions/       # Zed LSP extensions
-├── skills/          # Custom skills
-├── logs/            # Application logs
-└── bin/             # LSP binaries
+├── preferences.json  # Settings (theme, model, recent models)
+├── extensions/       # Zed WASM LSP extensions
+├── bin/             # Auto-downloaded LSP binaries
+├── skills/          # Custom global skills
+├── plans/           # Markdown plan files
+├── tokens/          # LSP and MCP authentication
+├── mcp_keys.json    # MCP server credentials
+└── logs/            # Application logs
 ```
 
 ### Project Configuration
 
-Add a `KRUSTY.md` or `CLAUDE.md` file to your project root for project-specific instructions that are automatically included in context.
+Add a `KRUSTY.md`, `KRAB.md`, or `CLAUDE.md` file to your project root for project-specific instructions that are automatically included in context. Generate one with `/init`.
+
+Project-level skills in `.krusty/skills/` override global skills.
 
 ## Development
 
