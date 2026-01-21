@@ -7,6 +7,7 @@ use serde_json::Value;
 use tracing::{debug, info};
 
 use super::{FormatHandler, RequestOptions};
+use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, Content, ModelMessage, Role};
 
 /// Anthropic format handler
@@ -36,22 +37,29 @@ impl FormatHandler for AnthropicFormat {
     /// consecutive user messages (e.g., tool_result followed by user text without
     /// assistant response between), we must insert an empty assistant message.
     ///
-    /// THINKING BLOCKS: According to Anthropic docs, thinking blocks are only required
-    /// when using tools with extended thinking. For the last assistant message with
-    /// pending tool calls (when we're about to send tool_results), we preserve thinking.
-    /// All other thinking blocks are stripped to avoid "Invalid signature" errors.
-    fn convert_messages(&self, messages: &[ModelMessage]) -> Vec<Value> {
+    /// THINKING BLOCKS: Provider-specific handling:
+    /// - MiniMax: Preserve ALL thinking blocks (per their docs), no signature field needed
+    /// - Anthropic: Only preserve last thinking with pending tools (signature validation)
+    fn convert_messages(&self, messages: &[ModelMessage], provider_id: Option<ProviderId>) -> Vec<Value> {
         let mut result: Vec<Value> = Vec::new();
         let mut last_role: Option<&str> = None;
 
         info!("Converting {} messages for Anthropic API", messages.len());
 
+        // MiniMax: Preserve ALL thinking blocks (per their docs)
+        // Anthropic: Only preserve last thinking with pending tools (signature validation)
+        let preserve_all_thinking = provider_id == Some(ProviderId::MiniMax);
+        let include_signature = provider_id != Some(ProviderId::MiniMax);
+
         // Determine which assistant message (if any) should keep thinking blocks.
         // This is the last assistant message that has tool_use AND is followed by tool_result.
+        // Only used for Anthropic (when not preserving all thinking).
         let non_system_messages: Vec<_> =
             messages.iter().filter(|m| m.role != Role::System).collect();
 
-        let last_assistant_with_tools_idx = {
+        let last_assistant_with_tools_idx = if preserve_all_thinking {
+            None // Not needed when preserving all thinking
+        } else {
             let mut idx = None;
             for (i, msg) in non_system_messages.iter().enumerate() {
                 if msg.role == Role::Assistant
@@ -104,12 +112,12 @@ impl FormatHandler for AnthropicFormat {
             }
 
             // Determine if this message should include thinking blocks
-            let include_thinking = last_assistant_with_tools_idx == Some(i);
+            let include_thinking = preserve_all_thinking || last_assistant_with_tools_idx == Some(i);
 
             let content: Vec<Value> = msg
                 .content
                 .iter()
-                .filter_map(|c| convert_content(c, include_thinking))
+                .filter_map(|c| convert_content(c, include_thinking, include_signature))
                 .collect();
 
             result.push(serde_json::json!({
@@ -175,7 +183,13 @@ impl FormatHandler for AnthropicFormat {
 }
 
 /// Convert a single content block to Anthropic JSON format
-fn convert_content(content: &Content, include_thinking: bool) -> Option<Value> {
+///
+/// # Arguments
+/// * `content` - The content block to convert
+/// * `include_thinking` - Whether to include thinking blocks
+/// * `include_signature` - Whether to include signature field in thinking blocks
+///   (Anthropic requires signature, MiniMax doesn't need it)
+fn convert_content(content: &Content, include_thinking: bool, include_signature: bool) -> Option<Value> {
     match content {
         Content::Text { text } => Some(serde_json::json!({
             "type": "text",
@@ -247,14 +261,24 @@ fn convert_content(content: &Content, include_thinking: bool) -> Option<Value> {
                 }))
             }
         }
-        // Only include thinking blocks for the last assistant message with pending tools
+        // Provider-specific thinking block handling:
+        // - Anthropic: Include signature (required for validation)
+        // - MiniMax: No signature field (matches their API format)
         Content::Thinking { thinking, signature } => {
             if include_thinking {
-                Some(serde_json::json!({
-                    "type": "thinking",
-                    "thinking": thinking,
-                    "signature": signature
-                }))
+                if include_signature {
+                    Some(serde_json::json!({
+                        "type": "thinking",
+                        "thinking": thinking,
+                        "signature": signature
+                    }))
+                } else {
+                    // MiniMax: No signature field needed
+                    Some(serde_json::json!({
+                        "type": "thinking",
+                        "thinking": thinking
+                    }))
+                }
             } else {
                 None // Strip thinking from other messages
             }

@@ -426,16 +426,23 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             dynamic_models: false,
             pricing_hint: None,
         },
-        // MiniMax - M2 model (Anthropic-compatible API)
+        // MiniMax - M2 models (Anthropic-compatible API)
         ProviderConfig {
             id: ProviderId::MiniMax,
             name: "MiniMax".to_string(),
-            description: "M2.1 model (fast, interleaved thinking)".to_string(),
+            description: "M2 models (fast, interleaved thinking)".to_string(),
             base_url: "https://api.minimax.io/anthropic/v1/messages".to_string(),
             auth_header: AuthHeader::XApiKey,
             models: vec![
+                // Lightning: Fastest (100 tps)
+                ModelInfo::new("MiniMax-M2.1-lightning", "MiniMax M2.1 Lightning", 200_000, 64_000)
+                    .with_anthropic_thinking(),
+                // Standard M2.1: Balanced (60 tps)
                 ModelInfo::new("MiniMax-M2.1", "MiniMax M2.1", 200_000, 64_000)
-                    .with_anthropic_thinking(), // MiniMax supports interleaved thinking
+                    .with_anthropic_thinking(),
+                // M2: Advanced reasoning
+                ModelInfo::new("MiniMax-M2", "MiniMax M2", 200_000, 64_000)
+                    .with_anthropic_thinking(),
             ],
             supports_tools: true,
             dynamic_models: false,

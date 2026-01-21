@@ -38,7 +38,10 @@ pub fn is_openai_compatible_model(model_id: &str) -> bool {
     id_lower.contains("glm") || id_lower.contains("kimi-k2") || id_lower.contains("minimax-m2")
 }
 
-/// Check if a model uses reasoning_content field (DeepSeek, MiniMax M2)
+/// Check if a model uses reasoning_content field (OpenAI format only)
+///
+/// Note: MiniMax via their Anthropic API uses standard thinking blocks.
+/// This function applies to OpenAI-format responses (e.g., via OpenRouter).
 pub fn uses_reasoning_content(model_id: &str) -> bool {
     let id_lower = model_id.to_lowercase();
     id_lower.contains("deepseek") || id_lower.contains("minimax-m2")

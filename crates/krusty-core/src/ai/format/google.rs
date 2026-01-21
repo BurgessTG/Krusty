@@ -5,6 +5,7 @@
 use serde_json::Value;
 
 use super::{FormatHandler, RequestOptions};
+use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, Content, ModelMessage, Role};
 
 /// Google format handler
@@ -28,7 +29,8 @@ impl Default for GoogleFormat {
 
 impl FormatHandler for GoogleFormat {
     /// Convert messages to Google contents format
-    fn convert_messages(&self, messages: &[ModelMessage]) -> Vec<Value> {
+    /// Note: provider_id is unused for Google format (no thinking block handling needed)
+    fn convert_messages(&self, messages: &[ModelMessage], _provider_id: Option<ProviderId>) -> Vec<Value> {
         messages
             .iter()
             .filter(|m| m.role != Role::System) // System handled separately

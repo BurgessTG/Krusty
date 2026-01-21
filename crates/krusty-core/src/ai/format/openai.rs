@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::{FormatHandler, RequestOptions};
 use crate::ai::models::ApiFormat;
+use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, Content, ModelMessage, Role};
 
 /// OpenAI format handler
@@ -35,7 +36,8 @@ impl FormatHandler for OpenAIFormat {
     /// Convert domain messages to OpenAI chat/completions format
     ///
     /// OpenAI format is simpler: role + content (string or array of content parts)
-    fn convert_messages(&self, messages: &[ModelMessage]) -> Vec<Value> {
+    /// Note: provider_id is unused for OpenAI format (no thinking block handling needed)
+    fn convert_messages(&self, messages: &[ModelMessage], _provider_id: Option<ProviderId>) -> Vec<Value> {
         let mut result: Vec<Value> = Vec::new();
 
         for msg in messages.iter().filter(|m| m.role != Role::System) {

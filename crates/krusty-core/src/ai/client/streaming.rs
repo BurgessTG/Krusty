@@ -67,7 +67,7 @@ impl AiClient {
         call_start: Instant,
     ) -> Result<mpsc::UnboundedReceiver<StreamPart>> {
         let format_handler = AnthropicFormat::new();
-        let anthropic_messages = format_handler.convert_messages(&messages);
+        let anthropic_messages = format_handler.convert_messages(&messages, Some(self.provider_id()));
 
         // Extract any system messages from conversation (e.g., pinch context)
         let injected_context: String = messages
@@ -246,7 +246,7 @@ impl AiClient {
         );
 
         let format_handler = OpenAIFormat::new(self.config().api_format);
-        let openai_messages = format_handler.convert_messages(&messages);
+        let openai_messages = format_handler.convert_messages(&messages, Some(self.provider_id()));
 
         // Extract system prompt
         let system: String = messages
@@ -378,7 +378,7 @@ impl AiClient {
         info!("Using Google/Gemini format for {}", self.config().model);
 
         let format_handler = GoogleFormat::new();
-        let contents = format_handler.convert_messages(&messages);
+        let contents = format_handler.convert_messages(&messages, Some(self.provider_id()));
 
         // Extract system prompt
         let system: String = messages

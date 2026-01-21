@@ -11,6 +11,7 @@ pub mod response;
 use serde_json::Value;
 
 use crate::ai::client::config::CallOptions;
+use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, ModelMessage};
 
 /// Trait for handling different API formats
@@ -19,7 +20,11 @@ use crate::ai::types::{AiTool, ModelMessage};
 /// API formats (Anthropic, OpenAI, Google).
 pub trait FormatHandler: Send + Sync {
     /// Convert domain messages to API-specific format
-    fn convert_messages(&self, messages: &[ModelMessage]) -> Vec<Value>;
+    ///
+    /// The provider_id parameter allows provider-specific handling:
+    /// - MiniMax: Preserve ALL thinking blocks (per their docs)
+    /// - Anthropic: Only preserve last thinking with pending tools (signature validation)
+    fn convert_messages(&self, messages: &[ModelMessage], provider_id: Option<ProviderId>) -> Vec<Value>;
 
     /// Convert tools to API-specific format
     fn convert_tools(&self, tools: &[AiTool]) -> Vec<Value>;

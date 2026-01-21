@@ -99,12 +99,11 @@ pub fn top_p_for_model(model_id: &str) -> Option<f32> {
 pub fn top_k_for_model(model_id: &str) -> Option<i32> {
     let id = model_id.to_lowercase();
 
-    if id.contains("minimax-m2") {
-        if id.contains("m2.1") {
-            return Some(40);
-        }
-        return Some(20);
+    // MiniMax ignores top_k according to their API docs
+    if id.contains("minimax") {
+        return None;
     }
+
     if id.contains("gemini") {
         return Some(64);
     }
@@ -348,8 +347,9 @@ mod tests {
 
     #[test]
     fn test_top_k_for_model() {
-        assert_eq!(top_k_for_model("minimax-m2.1"), Some(40));
-        assert_eq!(top_k_for_model("minimax-m2"), Some(20));
+        // MiniMax ignores top_k per their API docs
+        assert_eq!(top_k_for_model("minimax-m2.1"), None);
+        assert_eq!(top_k_for_model("minimax-m2"), None);
         assert_eq!(top_k_for_model("gemini-3-pro"), Some(64));
         assert_eq!(top_k_for_model("claude-sonnet-4"), None);
     }
