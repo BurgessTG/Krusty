@@ -65,8 +65,8 @@ Krusty supports multiple AI providers. Add API keys via `/auth` in the TUI.
 | Provider | Models |
 |----------|--------|
 | **Anthropic** | Claude Opus 4.5, Claude Sonnet 4.5, Claude Haiku 4.5 |
-| **OpenRouter** | Claude Opus 4.5/4, Claude Sonnet 4.5/4, Claude Haiku 4.5, GPT-4.1, GPT-4.1 Mini, GPT-4.5 Preview, o3, o4-mini, Gemini 2.5 Pro/Flash, Gemini 2.0 Flash, DeepSeek R1/V3, Llama 4 Maverick/Scout, Qwen 3 235B, QwQ 32B, + 100 more |
-| **OpenCode Zen** | Claude Opus 4.5, Claude Sonnet 4.5/4, Claude Haiku 4.5, GPT-4.1, GPT-4.1 Mini, GPT-4.5 Preview, Gemini 2.5 Pro/Flash, Qwen Coder Plus, Qwen Max |
+| **OpenRouter** | Claude Opus 4.5/4, Claude Sonnet 4.5/4, Claude Haiku 4.5, GPT-5.2, GPT-5.2 Instant/Thinking/Pro/Codex, o3, o4-mini, Gemini 2.5 Pro/Flash, Gemini 2.0 Flash, DeepSeek R1/V3, Llama 4 Maverick/Scout, Qwen 3 235B, QwQ 32B, + 100 more |
+| **OpenCode Zen** | Claude Opus 4.5, Claude Sonnet 4.5/4, Claude Haiku 4.5, GPT-5.2, GPT-5.2 Instant/Thinking/Codex, Gemini 2.5 Pro/Flash, Qwen Coder Plus, Qwen Max |
 | **Z.ai** | GLM-4.7, GLM-4.5-Air |
 | **MiniMax** | MiniMax M2.1 Lightning, MiniMax M2.1, MiniMax M2 |
 | **Kimi** | Kimi K2, Kimi K2 Thinking |
