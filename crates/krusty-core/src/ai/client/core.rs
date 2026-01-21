@@ -163,7 +163,9 @@ impl AiClient {
     ) -> reqwest::RequestBuilder {
         let mut request = self.build_request(url);
 
-        if !beta_headers.is_empty() && self.config.uses_anthropic_api() {
+        // Only add beta headers for native Anthropic provider
+        // Third-party Anthropic-compatible providers (Z.ai, MiniMax, etc.) may not support them
+        if !beta_headers.is_empty() && self.config.is_anthropic() {
             let beta_str = beta_headers.join(",");
             request = request.header("anthropic-beta", beta_str);
         }

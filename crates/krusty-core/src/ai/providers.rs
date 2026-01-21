@@ -28,7 +28,7 @@ impl ProviderId {
             ProviderId::Anthropic,   // Default provider, always first
             ProviderId::MiniMax,     // 1 model
             ProviderId::Kimi,        // 1 model
-            ProviderId::ZAi,         // 3 models
+            ProviderId::ZAi,         // 2 models
             ProviderId::OpenCodeZen, // 11 models
             ProviderId::OpenRouter,  // 100+ dynamic models, always last
         ]
@@ -408,19 +408,18 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             models: vec![],                   // Fetched dynamically from /v1/models
             supports_tools: true,
             dynamic_models: true,
-            pricing_hint: Some("Pay-as-you-go, free tier available".to_string()),
+            pricing_hint: None,
         },
-        // Z.ai - cheap GLM models
+        // Z.ai - GLM Coding Plan (Anthropic-compatible endpoint)
         ProviderConfig {
             id: ProviderId::ZAi,
             name: "Z.ai".to_string(),
-            description: "GLM models (4.7, 4.6, 4.5)".to_string(),
-            base_url: "https://open.z.ai/v1/messages".to_string(),
+            description: "GLM Coding Plan (GLM-4.7, ~3x Claude usage)".to_string(),
+            base_url: "https://api.z.ai/api/anthropic/v1/messages".to_string(),
             auth_header: AuthHeader::XApiKey,
             models: vec![
-                ModelInfo::new("glm-4.7", "GLM 4.7", 128_000, 16_384),
-                ModelInfo::new("glm-4.6", "GLM 4.6", 128_000, 16_384),
-                ModelInfo::new("glm-4.5", "GLM 4.5", 98_000, 16_384),
+                ModelInfo::new("GLM-4.7", "GLM 4.7", 128_000, 16_384),
+                ModelInfo::new("GLM-4.5-Air", "GLM 4.5 Air", 128_000, 16_384),
             ],
             supports_tools: true,
             dynamic_models: false,
@@ -446,7 +445,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             ],
             supports_tools: true,
             dynamic_models: false,
-            pricing_hint: Some("~5% of Claude".to_string()),
+            pricing_hint: None,
         },
         // Kimi/Moonshot - K2 model (Anthropic-compatible API)
         ProviderConfig {

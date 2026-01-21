@@ -216,6 +216,8 @@ pub fn transform_message_for_provider(
 ) -> serde_json::Value {
     let id = model_id.to_lowercase();
 
+    // Note: Z.ai now uses Anthropic-compatible endpoint, may not need this transform.
+    // Keeping for now as tool call ID sanitization is harmless for Anthropic format.
     if id.contains("mistral") || provider_id == ProviderId::ZAi {
         return transform_mistral_message(message);
     }

@@ -178,7 +178,7 @@ impl SubAgentPool {
         Self {
             client,
             cancellation,
-            max_concurrency: 5,
+            max_concurrency: 100, // No practical limit
             cache: Arc::new(SharedExploreCache::new()),
             override_model: None,
         }

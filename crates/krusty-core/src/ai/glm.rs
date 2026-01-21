@@ -33,6 +33,9 @@ pub struct ChatTemplateArgs {
 }
 
 /// Check if a model ID is an OpenAI-compatible thinking model
+///
+/// Note: GLM models via Z.ai's Anthropic endpoint use standard Anthropic format.
+/// This function is for OpenAI-format handling (e.g., via OpenCode Zen).
 pub fn is_openai_compatible_model(model_id: &str) -> bool {
     let id_lower = model_id.to_lowercase();
     id_lower.contains("glm") || id_lower.contains("kimi-k2") || id_lower.contains("minimax-m2")

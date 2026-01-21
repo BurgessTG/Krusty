@@ -345,7 +345,8 @@ mod tests {
 
     #[test]
     fn test_default_model() {
-        let model = default_model_for_provider(ProviderId::Anthropic);
+        let provider = get_provider(ProviderId::Anthropic).unwrap();
+        let model = provider.default_model();
         assert!(model.contains("claude"));
     }
 }
