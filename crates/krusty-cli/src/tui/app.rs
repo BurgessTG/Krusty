@@ -1607,7 +1607,16 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         let _ = self.try_load_auth().await;
 
-        // Check for pending update from previous session
+        // Check if we just applied an update (set by main.rs)
+        if let Ok(version) = std::env::var("KRUSTY_JUST_UPDATED") {
+            std::env::remove_var("KRUSTY_JUST_UPDATED");
+            self.show_toast(crate::tui::components::Toast::success(format!(
+                "Updated to v{}",
+                version
+            )));
+        }
+
+        // Check for pending update from previous session (cleans up stale files)
         self.check_pending_update();
 
         // Check for updates in background

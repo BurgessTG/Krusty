@@ -139,6 +139,14 @@ async fn main() -> Result<()> {
         .with_ansi(false)
         .init();
 
+    // Apply any pending update before starting TUI
+    // This ensures updates are applied silently on restart
+    if let Ok(Some(version)) = krusty_core::updater::apply_pending_update() {
+        // Set env var so TUI can show success toast
+        std::env::set_var("KRUSTY_JUST_UPDATED", &version);
+        tracing::info!("Applied pending update to v{}", version);
+    }
+
     let cli = Cli::parse();
 
     // If --acp flag is set, run in ACP server mode

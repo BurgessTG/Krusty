@@ -88,12 +88,6 @@ impl Toast {
         }
     }
 
-    /// Make this toast persistent (won't auto-dismiss)
-    pub fn persistent(mut self) -> Self {
-        self.duration = Duration::from_secs(86400); // 24 hours
-        self
-    }
-
     /// Check if the toast has expired
     pub fn is_expired(&self) -> bool {
         self.created_at.elapsed() >= self.duration

@@ -13,12 +13,15 @@ use tokio::sync::mpsc;
 
 impl App {
     /// Check if there's a pending update that was downloaded previously.
-    /// Called early in startup - just shows notification, doesn't apply.
+    /// Called early in startup - if we get here, apply_pending_update() was already
+    /// called in main.rs. If a pending file still exists, it means apply failed,
+    /// so we clean it up rather than showing a toast every restart.
     pub fn check_pending_update(&mut self) {
         if has_pending_update() {
-            self.show_toast(
-                Toast::success("Update ready - restart krusty to apply").persistent(),
-            );
+            // The pending update wasn't applied (probably failed)
+            // Clean it up - a fresh update check will download again if needed
+            cleanup_pending_update();
+            tracing::info!("Cleaned up stale pending update file");
         }
     }
 
@@ -110,10 +113,10 @@ impl App {
                 }
                 UpdateStatus::Ready { version } => {
                     // Update is downloaded and ready - user needs to restart
-                    self.show_toast(
-                        Toast::success(format!("v{} ready - restart to update", version))
-                            .persistent(),
-                    );
+                    self.show_toast(Toast::success(format!(
+                        "v{} ready - restart to update",
+                        version
+                    )));
                     clear_channel = true;
                 }
                 UpdateStatus::Error(e) => {
