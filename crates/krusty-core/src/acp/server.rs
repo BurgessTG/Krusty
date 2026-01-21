@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use super::agent::KrustyAgent;
 use crate::ai::providers::ProviderId;
 use crate::storage::credentials::{ActiveProviderStore, CredentialStore};
-use crate::tools::ToolRegistry;
+use crate::tools::{register_all_tools, ToolRegistry};
 
 /// ACP Server configuration
 #[derive(Debug, Clone, Default)]
@@ -64,6 +64,10 @@ impl AcpServer {
     /// All logging should go to stderr.
     pub async fn run(self) -> Result<()> {
         info!("Starting Krusty ACP server");
+
+        // Register all built-in tools (Read, Write, Edit, Bash, Grep, etc.)
+        register_all_tools(self.agent.tools(), None).await;
+        info!("Registered {} tools", self.agent.tools().get_ai_tools().await.len());
 
         // Auto-initialize AI client from environment variables
         if let Some(config) = detect_api_key_from_env() {

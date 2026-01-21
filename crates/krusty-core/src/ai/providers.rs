@@ -566,7 +566,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             id: ProviderId::Kimi,
             name: "Kimi".to_string(),
             description: "K2 models (256K context, agentic)".to_string(),
-            base_url: "https://api.moonshot.ai/anthropic/v1/messages".to_string(),
+            base_url: "https://api.moonshot.ai/anthropic/v1/messages".to_string(), // Full path required
             auth_header: AuthHeader::XApiKey, // Anthropic-compatible endpoint uses x-api-key
             models: vec![
                 ModelInfo::new("kimi-k2", "Kimi K2", 256_000, 16_384),
