@@ -63,7 +63,7 @@ impl FormatHandler for OpenAIFormat {
             };
 
             // For tool results, use special format
-            // Tool messages don't need alternation check - they follow assistant tool_calls
+            // Tool messages must follow assistant messages with tool_calls
             if msg.role == Role::Tool {
                 for content in &msg.content {
                     if let Content::ToolResult {
@@ -79,8 +79,9 @@ impl FormatHandler for OpenAIFormat {
                         }));
                     }
                 }
-                // Tool messages are special - they must follow assistant with tool_calls
-                // Don't update last_role since they're part of the tool call flow
+                // Update last_role to track tool messages in the sequence
+                // This prevents incorrect filler insertion after tool results
+                last_role = Some("tool");
                 continue;
             }
 
