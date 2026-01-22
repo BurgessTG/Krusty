@@ -326,6 +326,7 @@ fn get_fallback_model(provider: ProviderId) -> &'static str {
         ProviderId::ZAi => "glm-4.5-flash",                     // Fast GLM model
         ProviderId::MiniMax => "MiniMax-M2.1",                  // MiniMax default
         ProviderId::Kimi => "kimi-for-coding",                  // Kimi Code API model
+        ProviderId::OpenAI => "gpt-4o-mini",                    // Fast and cheap OpenAI model
     }
 }
 

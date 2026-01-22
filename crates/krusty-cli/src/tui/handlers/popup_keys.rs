@@ -425,11 +425,166 @@ impl App {
                     _ => {}
                 }
             }
+            AuthState::AuthMethodSelection { .. } => match code {
+                KeyCode::Esc => self.popups.auth.go_back(),
+                KeyCode::Up => self.popups.auth.prev_auth_method(),
+                KeyCode::Down => self.popups.auth.next_auth_method(),
+                KeyCode::Enter => {
+                    // confirm_auth_method returns the method if OAuth was selected
+                    // For API key, it transitions internally
+                    if let Some((provider, method)) = self.popups.auth.confirm_auth_method() {
+                        // OAuth flow selected - start the async flow
+                        self.start_oauth_flow(provider, method);
+                    }
+                }
+                _ => {}
+            },
+            AuthState::OAuthBrowserWaiting { .. } | AuthState::OAuthDeviceCode { .. } => {
+                // During OAuth flow, only allow cancellation
+                if code == KeyCode::Esc {
+                    self.popups.auth.go_back();
+                }
+            }
             AuthState::Complete { .. } => {
                 if code == KeyCode::Esc || code == KeyCode::Enter {
                     self.popups.auth.reset();
                     self.popup = Popup::None;
                 }
+            }
+        }
+    }
+
+    /// Start OAuth flow for a provider
+    fn start_oauth_flow(
+        &mut self,
+        provider: crate::ai::providers::ProviderId,
+        method: krusty_core::auth::AuthMethod,
+    ) {
+        use crate::tui::utils::{DeviceCodeInfo, OAuthStatusUpdate};
+        use krusty_core::auth::{
+            openai_oauth_config, AuthMethod, BrowserOAuthFlow, DeviceCodeFlow,
+        };
+
+        let status_tx = self.oauth_status_tx.clone();
+
+        match method {
+            AuthMethod::OAuthBrowser => {
+                self.popups
+                    .auth
+                    .set_oauth_browser_status("Opening browser...");
+
+                tokio::spawn(async move {
+                    // Get OAuth config for the provider
+                    let config = match provider {
+                        crate::ai::providers::ProviderId::OpenAI => openai_oauth_config(),
+                        _ => {
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: false,
+                                message: format!("{} does not support OAuth", provider),
+                                device_code: None,
+                                token: None,
+                            });
+                            return;
+                        }
+                    };
+
+                    let flow = BrowserOAuthFlow::new(config);
+                    match flow.run().await {
+                        Ok(token) => {
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: true,
+                                message: "Authentication successful".to_string(),
+                                device_code: None,
+                                token: Some(token),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: false,
+                                message: format!("OAuth failed: {}", e),
+                                device_code: None,
+                                token: None,
+                            });
+                        }
+                    }
+                });
+            }
+            AuthMethod::OAuthDevice => {
+                tokio::spawn(async move {
+                    // Get OAuth config for the provider
+                    let config = match provider {
+                        crate::ai::providers::ProviderId::OpenAI => openai_oauth_config(),
+                        _ => {
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: false,
+                                message: format!("{} does not support OAuth", provider),
+                                device_code: None,
+                                token: None,
+                            });
+                            return;
+                        }
+                    };
+
+                    let flow = DeviceCodeFlow::new(config);
+
+                    // Request device code
+                    match flow.request_code().await {
+                        Ok(code_response) => {
+                            // Send device code info to UI
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: true, // Partial success - code received
+                                message: "Enter the code in your browser".to_string(),
+                                device_code: Some(DeviceCodeInfo {
+                                    user_code: code_response.user_code.clone(),
+                                    verification_uri: code_response.verification_uri.clone(),
+                                }),
+                                token: None,
+                            });
+
+                            // Poll for token
+                            match flow
+                                .poll_for_token(&code_response.device_code, code_response.interval)
+                                .await
+                            {
+                                Ok(token) => {
+                                    let _ = status_tx.send(OAuthStatusUpdate {
+                                        provider,
+                                        success: true,
+                                        message: "Authentication successful".to_string(),
+                                        device_code: None,
+                                        token: Some(token),
+                                    });
+                                }
+                                Err(e) => {
+                                    let _ = status_tx.send(OAuthStatusUpdate {
+                                        provider,
+                                        success: false,
+                                        message: format!("Device auth failed: {}", e),
+                                        device_code: None,
+                                        token: None,
+                                    });
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = status_tx.send(OAuthStatusUpdate {
+                                provider,
+                                success: false,
+                                message: format!("Failed to get device code: {}", e),
+                                device_code: None,
+                                token: None,
+                            });
+                        }
+                    }
+                });
+            }
+            AuthMethod::ApiKey => {
+                // This shouldn't happen as API key is handled internally
             }
         }
     }

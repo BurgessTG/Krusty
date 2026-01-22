@@ -64,6 +64,23 @@ pub async fn register_all_tools(registry: &ToolRegistry, _lsp_manager: Option<Ar
     registry.register(Arc::new(EnterPlanModeTool)).await;
 }
 
+/// Register tools for ACP (excludes TUI-only tools)
+///
+/// Excludes:
+/// - AskUserQuestionTool (requires TUI interaction)
+/// - TaskCompleteTool (requires TUI plan mode)
+/// - EnterPlanModeTool (requires TUI plan mode)
+/// - SkillTool (requires skills manager setup)
+pub async fn register_acp_tools(registry: &ToolRegistry) {
+    registry.register(Arc::new(ReadTool)).await;
+    registry.register(Arc::new(WriteTool)).await;
+    registry.register(Arc::new(EditTool)).await;
+    registry.register(Arc::new(BashTool)).await;
+    registry.register(Arc::new(GrepTool)).await;
+    registry.register(Arc::new(GlobTool)).await;
+    registry.register(Arc::new(ProcessesTool)).await;
+}
+
 /// Register the explore tool (requires AI client)
 ///
 /// Call this after authentication when the client is available.

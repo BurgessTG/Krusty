@@ -1,6 +1,7 @@
 //! Multi-provider credential storage
 //!
 //! Stores API keys for each provider in a JSON file.
+//! Also provides unified auth resolution that checks both API keys and OAuth tokens.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::ai::providers::ProviderId;
+use crate::auth::OAuthTokenStore;
 use crate::paths;
 
 /// Storage for API keys indexed by provider
@@ -115,6 +117,54 @@ impl CredentialStore {
     /// Remove API key for a provider
     pub fn remove(&mut self, provider: &ProviderId) {
         self.keys.remove(provider.storage_key());
+    }
+
+    /// Get authentication credential (API key or OAuth token) for a provider
+    ///
+    /// This checks API keys first, then falls back to OAuth tokens.
+    /// Returns the credential string suitable for use in Authorization headers.
+    pub fn get_auth(&self, provider: &ProviderId) -> Option<String> {
+        // Try API key first
+        if let Some(key) = self.get(provider) {
+            return Some(key.clone());
+        }
+
+        // Try OAuth token for providers that support it
+        if provider.supports_oauth() {
+            if let Ok(oauth_store) = OAuthTokenStore::load() {
+                if let Some(token) = oauth_store.get(provider) {
+                    // Only return non-expired tokens
+                    if !token.is_expired() {
+                        return Some(token.access_token.clone());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a provider has any valid authentication configured
+    ///
+    /// Checks both API keys and OAuth tokens.
+    pub fn has_auth(&self, provider: &ProviderId) -> bool {
+        self.get_auth(provider).is_some()
+    }
+
+    /// Get all providers with any authentication configured
+    ///
+    /// Includes providers with API keys or valid OAuth tokens.
+    pub fn providers_with_auth(&self) -> Vec<ProviderId> {
+        let mut providers: Vec<ProviderId> = ProviderId::all()
+            .iter()
+            .filter(|p| self.has_auth(p))
+            .copied()
+            .collect();
+        providers.sort_by_key(|p| {
+            // Keep the same order as ProviderId::all()
+            ProviderId::all().iter().position(|x| x == p).unwrap_or(999)
+        });
+        providers
     }
 }
 

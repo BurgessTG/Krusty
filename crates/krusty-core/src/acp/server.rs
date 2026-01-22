@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 use super::agent::KrustyAgent;
 use crate::ai::providers::ProviderId;
 use crate::storage::credentials::{ActiveProviderStore, CredentialStore};
-use crate::tools::{register_all_tools, ToolRegistry};
+use crate::tools::{register_acp_tools, ToolRegistry};
 
 /// ACP Server configuration
 #[derive(Debug, Clone, Default)]
@@ -65,8 +65,8 @@ impl AcpServer {
     pub async fn run(self) -> Result<()> {
         info!("Starting Krusty ACP server");
 
-        // Register all built-in tools (Read, Write, Edit, Bash, Grep, etc.)
-        register_all_tools(self.agent.tools(), None).await;
+        // Register ACP-compatible tools (excludes TUI-only tools like AskUserQuestion)
+        register_acp_tools(self.agent.tools()).await;
         info!(
             "Registered {} tools",
             self.agent.tools().get_ai_tools().await.len()
@@ -293,6 +293,7 @@ fn get_provider_api_key(provider: ProviderId) -> Option<String> {
         ProviderId::ZAi => "ZAI_API_KEY",
         ProviderId::MiniMax => "MINIMAX_API_KEY",
         ProviderId::Kimi => "KIMI_API_KEY",
+        ProviderId::OpenAI => "OPENAI_API_KEY",
     };
     std::env::var(env_var).ok().filter(|s| !s.is_empty())
 }

@@ -155,6 +155,17 @@ impl SessionState {
         })
         .await;
     }
+
+    /// Add system context to the conversation (injected into system prompt)
+    /// This is used to provide workspace context to the AI
+    pub async fn add_system_context(&self, context: String) {
+        use crate::ai::types::{Content, Role};
+        self.add_message(ModelMessage {
+            role: Role::System,
+            content: vec![Content::Text { text: context }],
+        })
+        .await;
+    }
 }
 
 /// Manager for all ACP sessions

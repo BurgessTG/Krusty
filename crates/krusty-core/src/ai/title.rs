@@ -14,6 +14,7 @@ fn get_title_model(provider: ProviderId) -> &'static str {
         ProviderId::ZAi => "glm-4.5-flash",
         ProviderId::MiniMax => "MiniMax-M2.1",
         ProviderId::Kimi => "kimi-for-coding", // Kimi Code API model
+        ProviderId::OpenAI => "gpt-4o-mini",   // Fast and cheap OpenAI model
     }
 }
 

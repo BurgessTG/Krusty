@@ -46,6 +46,26 @@ pub struct McpStatusUpdate {
     pub message: String,
 }
 
+/// OAuth authentication status update from background tasks
+pub struct OAuthStatusUpdate {
+    /// Provider being authenticated
+    pub provider: krusty_core::ai::providers::ProviderId,
+    /// Whether authentication succeeded
+    pub success: bool,
+    /// Status message or error
+    pub message: String,
+    /// Device code info (for device flow)
+    pub device_code: Option<DeviceCodeInfo>,
+    /// OAuth token data (on success)
+    pub token: Option<krusty_core::auth::OAuthTokenData>,
+}
+
+/// Device code information for OAuth device flow
+pub struct DeviceCodeInfo {
+    pub user_code: String,
+    pub verification_uri: String,
+}
+
 /// Container for all async channel receivers
 #[derive(Default)]
 pub struct AsyncChannels {
@@ -83,6 +103,8 @@ pub struct AsyncChannels {
     pub init_progress: Option<mpsc::UnboundedReceiver<AgentProgress>>,
     /// Auto-updater status updates
     pub update_status: Option<mpsc::UnboundedReceiver<krusty_core::updater::UpdateStatus>>,
+    /// OAuth authentication status updates
+    pub oauth_status: Option<mpsc::UnboundedReceiver<OAuthStatusUpdate>>,
 }
 
 impl AsyncChannels {

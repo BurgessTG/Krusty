@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_client_protocol::{
-    Client as AcpClient, ContentBlock as AcpContent, ContentChunk, SessionNotification,
-    SessionUpdate, StopReason, TextContent, ToolCall, ToolCallId,
+    Client as AcpClient, ContentBlock as AcpContent, ContentChunk, EmbeddedResourceResource,
+    SessionNotification, SessionUpdate, StopReason, TextContent, ToolCall, ToolCallId,
 };
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
@@ -123,13 +123,9 @@ impl PromptProcessor {
         })?;
 
         // Convert initial ACP content to Krusty messages and add to history
-        let initial_content: Vec<Content> = prompt
-            .into_iter()
-            .filter_map(|block| match block {
-                AcpContent::Text(text) => Some(Content::Text { text: text.text }),
-                _ => None,
-            })
-            .collect();
+        // Handle Text, Resource (embedded files), and ResourceLink (file references)
+        let initial_content: Vec<Content> =
+            prompt.into_iter().filter_map(convert_acp_content).collect();
 
         if !initial_content.is_empty() {
             session
@@ -371,6 +367,84 @@ fn convert_finish_reason(reason: FinishReason) -> StopReason {
         FinishReason::ToolCalls => StopReason::EndTurn,
         FinishReason::ContentFilter => StopReason::EndTurn,
         FinishReason::Other(_) => StopReason::EndTurn,
+    }
+}
+
+/// Convert ACP content block to Krusty's Content type
+///
+/// Handles:
+/// - Text: Direct text content
+/// - Resource: Embedded file content (from @-file mentions in Zed)
+/// - ResourceLink: Reference to a file (formatted as context)
+/// - Image/Audio: Logged but not yet supported
+fn convert_acp_content(block: AcpContent) -> Option<Content> {
+    match block {
+        AcpContent::Text(text) => Some(Content::Text { text: text.text }),
+
+        // Embedded resource - file content directly included
+        // This is what Zed sends when user @-mentions a file
+        AcpContent::Resource(embedded) => {
+            match embedded.resource {
+                EmbeddedResourceResource::TextResourceContents(text_resource) => {
+                    // Format as a code block with file path
+                    let formatted = format!(
+                        "File: {}\n```\n{}\n```",
+                        text_resource.uri, text_resource.text
+                    );
+                    debug!(
+                        "Embedded resource: {} ({} bytes)",
+                        text_resource.uri,
+                        text_resource.text.len()
+                    );
+                    Some(Content::Text { text: formatted })
+                }
+                EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    // Binary content - note its presence but don't include raw data
+                    let formatted = format!(
+                        "[Binary file: {} ({})]",
+                        blob.uri,
+                        blob.mime_type.as_deref().unwrap_or("unknown type")
+                    );
+                    debug!("Binary resource: {}", blob.uri);
+                    Some(Content::Text { text: formatted })
+                }
+                // Handle future resource types
+                _ => {
+                    warn!("Unknown embedded resource type, skipping");
+                    None
+                }
+            }
+        }
+
+        // Resource link - reference to a file the agent could read
+        AcpContent::ResourceLink(link) => {
+            // Format as a file reference for context
+            let formatted = if let Some(desc) = link.description {
+                format!("[File reference: {} - {}]", link.uri, desc)
+            } else {
+                format!("[File reference: {}]", link.uri)
+            };
+            debug!("Resource link: {}", link.uri);
+            Some(Content::Text { text: formatted })
+        }
+
+        // Image content - not yet supported
+        AcpContent::Image(_) => {
+            warn!("Image content not yet supported, skipping");
+            None
+        }
+
+        // Audio content - not yet supported
+        AcpContent::Audio(_) => {
+            warn!("Audio content not yet supported, skipping");
+            None
+        }
+
+        // Handle future content block types
+        _ => {
+            warn!("Unknown content block type, skipping");
+            None
+        }
     }
 }
 

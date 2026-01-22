@@ -460,13 +460,18 @@ impl Agent for KrustyAgent {
 
         // Pass as Option to our session manager which handles defaults
         let session = self.sessions.create_session(
-            Some(cwd),
+            Some(cwd.clone()),
             if mcp_servers.is_empty() {
                 None
             } else {
                 Some(mcp_servers)
             },
         );
+
+        // Build and inject workspace context so the AI understands the codebase
+        let workspace_context = build_workspace_context(&cwd);
+        session.add_system_context(workspace_context).await;
+        info!("Injected workspace context for: {:?}", cwd);
 
         // Detect available models from all configured providers
         let detected_models = self.detect_available_models().await;
@@ -690,6 +695,105 @@ fn extract_prompt_text(content: &[ContentBlock]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Build workspace context for the AI
+///
+/// Scans the workspace directory to provide the AI with understanding of:
+/// - Project type (based on config files)
+/// - Directory structure (top-level)
+/// - Key files present
+fn build_workspace_context(cwd: &std::path::Path) -> String {
+    use std::fs;
+
+    let mut context = String::new();
+    context.push_str(&format!(
+        "## Workspace Context\n\nWorking directory: {}\n\n",
+        cwd.display()
+    ));
+
+    // Check for project type indicators
+    let mut project_indicators = Vec::new();
+
+    let config_files = [
+        ("Cargo.toml", "Rust (Cargo)"),
+        ("package.json", "Node.js/JavaScript"),
+        ("pyproject.toml", "Python (pyproject)"),
+        ("setup.py", "Python (setup.py)"),
+        ("go.mod", "Go"),
+        ("pom.xml", "Java (Maven)"),
+        ("build.gradle", "Java/Kotlin (Gradle)"),
+        ("Makefile", "Make"),
+        ("CMakeLists.txt", "C/C++ (CMake)"),
+        ("Gemfile", "Ruby"),
+        ("composer.json", "PHP"),
+        ("pubspec.yaml", "Dart/Flutter"),
+        (".git", "Git repository"),
+    ];
+
+    for (file, project_type) in config_files {
+        if cwd.join(file).exists() {
+            project_indicators.push(project_type);
+        }
+    }
+
+    if !project_indicators.is_empty() {
+        context.push_str("Project type: ");
+        context.push_str(&project_indicators.join(", "));
+        context.push_str("\n\n");
+    }
+
+    // List top-level directory contents
+    context.push_str("### Directory contents:\n```\n");
+
+    if let Ok(entries) = fs::read_dir(cwd) {
+        let mut items: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                // Skip hidden files except .git
+                if name.starts_with('.') && name != ".git" {
+                    return None;
+                }
+                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                Some(if is_dir { format!("{}/", name) } else { name })
+            })
+            .collect();
+
+        items.sort();
+
+        // Limit to first 50 items to avoid overwhelming context
+        let display_count = items.len().min(50);
+        for item in items.iter().take(display_count) {
+            context.push_str(item);
+            context.push('\n');
+        }
+        if items.len() > 50 {
+            context.push_str(&format!("... and {} more items\n", items.len() - 50));
+        }
+    } else {
+        context.push_str("(unable to read directory)\n");
+    }
+
+    context.push_str("```\n");
+
+    // Add git branch info if available
+    if cwd.join(".git").exists() {
+        if let Ok(output) = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(cwd)
+            .output()
+        {
+            if output.status.success() {
+                let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !branch.is_empty() {
+                    context.push_str(&format!("\nGit branch: {}\n", branch));
+                }
+            }
+        }
+    }
+
+    context
 }
 
 #[cfg(test)]

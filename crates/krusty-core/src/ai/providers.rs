@@ -19,6 +19,7 @@ pub enum ProviderId {
     ZAi,
     MiniMax,
     Kimi,
+    OpenAI,
 }
 
 impl ProviderId {
@@ -27,6 +28,7 @@ impl ProviderId {
     pub fn all() -> &'static [ProviderId] {
         &[
             ProviderId::Anthropic,   // Default provider, always first
+            ProviderId::OpenAI,      // OpenAI direct (OAuth or API key)
             ProviderId::MiniMax,     // 3 models
             ProviderId::Kimi,        // 2 models
             ProviderId::ZAi,         // 2 models
@@ -44,6 +46,25 @@ impl ProviderId {
             ProviderId::ZAi => "z_ai",
             ProviderId::MiniMax => "minimax",
             ProviderId::Kimi => "kimi",
+            ProviderId::OpenAI => "openai",
+        }
+    }
+
+    /// Check if this provider supports OAuth authentication
+    pub fn supports_oauth(&self) -> bool {
+        matches!(self, ProviderId::OpenAI)
+    }
+
+    /// Get the authentication methods supported by this provider
+    pub fn auth_methods(&self) -> Vec<crate::auth::AuthMethod> {
+        use crate::auth::AuthMethod;
+        match self {
+            ProviderId::OpenAI => vec![
+                AuthMethod::OAuthBrowser,
+                AuthMethod::OAuthDevice,
+                AuthMethod::ApiKey,
+            ],
+            _ => vec![AuthMethod::ApiKey],
         }
     }
 }
@@ -57,6 +78,7 @@ impl fmt::Display for ProviderId {
             ProviderId::ZAi => write!(f, "Z.ai"),
             ProviderId::MiniMax => write!(f, "MiniMax"),
             ProviderId::Kimi => write!(f, "Kimi"),
+            ProviderId::OpenAI => write!(f, "OpenAI"),
         }
     }
 }
@@ -348,6 +370,14 @@ impl ProviderCapabilities {
                 prompt_caching: false, // Unclear if supported
                 web_plugins: false,
             },
+            // OpenAI: supports tools but not server-executed web search
+            ProviderId::OpenAI => Self {
+                web_search: false,
+                web_fetch: false,
+                context_management: false,
+                prompt_caching: false,
+                web_plugins: false,
+            },
             // Other providers: minimal capabilities
             ProviderId::ZAi | ProviderId::MiniMax | ProviderId::Kimi => Self::default(),
         }
@@ -593,6 +623,32 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
                 ("User-Agent".to_string(), "KimiCLI/1.0".to_string()),
             ]),
         },
+        // OpenAI - Direct access with OAuth or API key (OpenAI-compatible format)
+        // Supports OAuth browser flow, device code flow, and API key authentication
+        ProviderConfig {
+            id: ProviderId::OpenAI,
+            name: "OpenAI".to_string(),
+            description: "GPT-5.2, o3, Codex (OAuth or API key)".to_string(),
+            base_url: "https://api.openai.com/v1/chat/completions".to_string(),
+            auth_header: AuthHeader::Bearer,
+            models: vec![
+                // GPT-5.2 family
+                ModelInfo::new("gpt-5.2", "GPT-5.2", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-codex", "GPT-5.2 Codex", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-instant", "GPT-5.2 Instant", 400_000, 128_000),
+                ModelInfo::new("gpt-5.2-thinking", "GPT-5.2 Thinking", 400_000, 128_000),
+                // o3/o4 reasoning models
+                ModelInfo::new("o3", "OpenAI o3", 200_000, 100_000),
+                ModelInfo::new("o4-mini", "OpenAI o4-mini", 200_000, 100_000),
+                // GPT-4 family (still widely used)
+                ModelInfo::new("gpt-4o", "GPT-4o", 128_000, 16_384),
+                ModelInfo::new("gpt-4o-mini", "GPT-4o Mini", 128_000, 16_384),
+            ],
+            supports_tools: true,
+            dynamic_models: true,
+            pricing_hint: None,
+            custom_headers: HashMap::new(),
+        },
     ]
 });
 
@@ -614,21 +670,24 @@ mod tests {
         assert_eq!(ProviderId::Anthropic.to_string(), "Anthropic");
         assert_eq!(ProviderId::OpenRouter.to_string(), "OpenRouter");
         assert_eq!(ProviderId::ZAi.to_string(), "Z.ai");
+        assert_eq!(ProviderId::OpenAI.to_string(), "OpenAI");
     }
 
     #[test]
     fn test_storage_keys() {
         assert_eq!(ProviderId::Anthropic.storage_key(), "anthropic");
         assert_eq!(ProviderId::ZAi.storage_key(), "z_ai");
+        assert_eq!(ProviderId::OpenAI.storage_key(), "openai");
     }
 
     #[test]
     fn test_builtin_providers() {
         let providers = builtin_providers();
-        assert_eq!(providers.len(), 6);
+        assert_eq!(providers.len(), 7);
         assert!(providers.iter().any(|p| p.id == ProviderId::Anthropic));
         assert!(providers.iter().any(|p| p.id == ProviderId::OpenRouter));
         assert!(providers.iter().any(|p| p.id == ProviderId::OpenCodeZen));
+        assert!(providers.iter().any(|p| p.id == ProviderId::OpenAI));
     }
 
     #[test]
@@ -777,5 +836,40 @@ mod tests {
         let zai = ProviderCapabilities::for_provider(ProviderId::ZAi);
         assert!(!zai.web_search);
         assert!(!zai.web_plugins);
+
+        let openai = ProviderCapabilities::for_provider(ProviderId::OpenAI);
+        assert!(!openai.web_search);
+        assert!(!openai.web_plugins);
+    }
+
+    #[test]
+    fn test_oauth_support() {
+        use crate::auth::AuthMethod;
+
+        // OpenAI supports OAuth
+        assert!(ProviderId::OpenAI.supports_oauth());
+        let openai_methods = ProviderId::OpenAI.auth_methods();
+        assert!(openai_methods.contains(&AuthMethod::OAuthBrowser));
+        assert!(openai_methods.contains(&AuthMethod::OAuthDevice));
+        assert!(openai_methods.contains(&AuthMethod::ApiKey));
+
+        // Anthropic doesn't support OAuth
+        assert!(!ProviderId::Anthropic.supports_oauth());
+        let anthropic_methods = ProviderId::Anthropic.auth_methods();
+        assert_eq!(anthropic_methods, vec![AuthMethod::ApiKey]);
+    }
+
+    #[test]
+    fn test_openai_config() {
+        let provider = get_provider(ProviderId::OpenAI).unwrap();
+        assert_eq!(provider.name, "OpenAI");
+        assert_eq!(
+            provider.base_url,
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(provider.auth_header, AuthHeader::Bearer);
+        assert!(provider.supports_tools);
+        assert!(provider.dynamic_models);
+        assert!(!provider.models.is_empty());
     }
 }

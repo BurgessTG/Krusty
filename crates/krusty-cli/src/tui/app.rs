@@ -166,6 +166,8 @@ pub struct App {
     pub mcp_manager: Arc<krusty_core::mcp::McpManager>,
     /// Sender for MCP status updates from background tasks
     pub mcp_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::McpStatusUpdate>,
+    /// Sender for OAuth status updates from background tasks
+    pub oauth_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::OAuthStatusUpdate>,
 
     // WASM Extension Host
     pub wasm_host: Option<Arc<WasmHost>>,
@@ -460,8 +462,12 @@ impl App {
             }
         }
 
+        // Create OAuth status channel
+        let (oauth_status_tx, oauth_status_rx) = tokio::sync::mpsc::unbounded_channel();
+
         let mut channels = AsyncChannels::new();
         channels.mcp_status = Some(mcp_status_rx);
+        channels.oauth_status = Some(oauth_status_rx);
 
         Self {
             view: View::StartMenu,
@@ -507,6 +513,7 @@ impl App {
             skills_manager,
             mcp_manager,
             mcp_status_tx,
+            oauth_status_tx,
             wasm_host,
             working_dir,
             session_manager,
@@ -952,8 +959,8 @@ impl App {
 
     /// Try to load existing authentication for the active provider
     pub async fn try_load_auth(&mut self) -> Result<()> {
-        // Try credential store for all providers (unified API key storage)
-        if let Some(key) = self.credential_store.get(&self.active_provider).cloned() {
+        // Try credential store for all providers (API keys and OAuth tokens)
+        if let Some(key) = self.credential_store.get_auth(&self.active_provider) {
             let config = self.create_client_config();
             self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
@@ -1101,14 +1108,14 @@ impl App {
             }
         }
 
-        // Try to load credentials for the new provider
-        if let Some(key) = self.credential_store.get(&provider_id).cloned() {
+        // Try to load credentials for the new provider (API key or OAuth token)
+        if let Some(key) = self.credential_store.get_auth(&provider_id) {
             let config = self.create_client_config();
             self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
-            tracing::info!("Switched to provider {} (loaded existing key)", provider_id);
+            tracing::info!("Switched to provider {} (loaded existing auth)", provider_id);
         } else {
-            // No stored key - user will need to authenticate
+            // No stored credentials - user will need to authenticate
             self.ai_client = None;
             self.api_key = None;
             tracing::info!(
@@ -1120,7 +1127,8 @@ impl App {
 
     /// Get list of configured provider IDs (ones with API keys)
     pub fn configured_providers(&self) -> Vec<ProviderId> {
-        self.credential_store.configured_providers()
+        // Use providers_with_auth to include both API key and OAuth-authenticated providers
+        self.credential_store.providers_with_auth()
     }
 
     /// Check if authenticated
@@ -1556,6 +1564,72 @@ impl App {
         }
     }
 
+    /// Poll OAuth status updates from background authentication tasks
+    fn poll_oauth_status(&mut self) {
+        if let Some(mut rx) = self.channels.oauth_status.take() {
+            loop {
+                match rx.try_recv() {
+                    Ok(update) => {
+                        // Handle device code info (show to user)
+                        if let Some(device_info) = &update.device_code {
+                            self.popups.auth.set_device_code(
+                                &device_info.user_code,
+                                &device_info.verification_uri,
+                            );
+                        }
+
+                        if update.success {
+                            // Save the OAuth token
+                            if let Some(token) = update.token {
+                                if let Err(e) = self.save_oauth_token(update.provider, token) {
+                                    tracing::error!("Failed to save OAuth token: {}", e);
+                                    self.popups
+                                        .auth
+                                        .set_oauth_error(&format!("Failed to save token: {}", e));
+                                } else {
+                                    // Mark auth as complete
+                                    self.popups.auth.set_oauth_complete();
+
+                                    // Switch to the authenticated provider
+                                    if self.active_provider != update.provider {
+                                        self.switch_provider(update.provider);
+                                    }
+
+                                    self.messages.push((
+                                        "system".to_string(),
+                                        format!("{} authenticated via OAuth!", update.provider),
+                                    ));
+                                }
+                            }
+                        } else {
+                            // Show error
+                            self.popups.auth.set_oauth_error(&update.message);
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                        self.channels.oauth_status = Some(rx);
+                        break;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Save OAuth token to storage
+    fn save_oauth_token(
+        &self,
+        provider: krusty_core::ai::providers::ProviderId,
+        token: krusty_core::auth::OAuthTokenData,
+    ) -> anyhow::Result<()> {
+        let mut store = krusty_core::auth::OAuthTokenStore::load()?;
+        store.set(provider, token);
+        store.save()?;
+        Ok(())
+    }
+
     /// Tick all animations. Returns true if any animation is still running.
     fn tick_blocks(&mut self) -> bool {
         let blocks = self.blocks.tick_all();
@@ -1828,6 +1902,9 @@ impl App {
 
             // Poll MCP status updates from background tasks
             self.poll_mcp_status();
+
+            // Poll OAuth status updates from background tasks
+            self.poll_oauth_status();
 
             // Poll update status and show toasts
             self.poll_update_status();

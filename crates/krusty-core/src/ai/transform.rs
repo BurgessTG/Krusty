@@ -184,8 +184,8 @@ pub fn wrap_provider_options(options: Value, provider_id: ProviderId) -> Provide
                 }
             }
         }
-        ProviderId::ZAi | ProviderId::MiniMax | ProviderId::Kimi => {
-            // For OpenAI-compatible providers (GLM, MiniMax, Kimi)
+        ProviderId::ZAi | ProviderId::MiniMax | ProviderId::Kimi | ProviderId::OpenAI => {
+            // For OpenAI-compatible providers (GLM, MiniMax, Kimi, OpenAI)
             // Check if options contain reasoning_content (DeepSeek/MiniMax style)
             if options
                 .as_object()
