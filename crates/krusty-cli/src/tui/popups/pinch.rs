@@ -14,7 +14,9 @@ use ratatui::{
     Frame,
 };
 
-use super::common::{center_rect, popup_block, popup_title, render_popup_background, PopupSize};
+use super::common::{
+    center_rect, popup_block, popup_title, render_popup_background, scroll_indicator, PopupSize,
+};
 use crate::agent::SummarizationResult;
 use crate::tui::animation::menu::CrabAnimator;
 use crate::tui::themes::Theme;
@@ -514,17 +516,31 @@ impl PinchPopup {
         let title = Paragraph::new(title_lines).alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
-        // Summary (scrollable)
-        let summary_lines: Vec<Line> = summary
-            .lines()
-            .skip(scroll_offset)
-            .map(|line| {
-                Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.text_color),
-                ))
-            })
-            .collect();
+        // Summary (scrollable) with scroll indicators
+        let total_lines = summary.lines().count();
+        // Account for block borders (2 lines) and potential scroll indicators
+        let visible_height = (chunks[1].height as usize).saturating_sub(4);
+
+        let mut summary_lines: Vec<Line> = Vec::new();
+
+        // Scroll indicator (up)
+        if scroll_offset > 0 {
+            summary_lines.push(scroll_indicator("up", scroll_offset, theme));
+        }
+
+        // Summary content
+        for line in summary.lines().skip(scroll_offset).take(visible_height) {
+            summary_lines.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.text_color),
+            )));
+        }
+
+        // Scroll indicator (down)
+        let remaining = total_lines.saturating_sub(scroll_offset + visible_height);
+        if remaining > 0 {
+            summary_lines.push(scroll_indicator("down", remaining, theme));
+        }
 
         let summary_block = Block::default()
             .borders(Borders::ALL)

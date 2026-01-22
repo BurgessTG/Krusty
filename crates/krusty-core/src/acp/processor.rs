@@ -58,16 +58,30 @@ impl PromptProcessor {
         provider: ProviderId,
         model_override: Option<String>,
     ) {
+        use std::collections::HashMap;
+
         // Get provider configuration from the registry
         let provider_config = get_provider(provider);
 
-        let (model, base_url, auth_header) = if let Some(pc) = provider_config {
+        let (model, base_url, auth_header, custom_headers) = if let Some(pc) = provider_config {
             let model = model_override.unwrap_or_else(|| pc.default_model().to_string());
-            (model, Some(pc.base_url.clone()), pc.auth_header)
+            (
+                model,
+                Some(pc.base_url.clone()),
+                pc.auth_header,
+                pc.custom_headers.clone(),
+            )
         } else {
             // Fallback for unknown providers
             let model = model_override.unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
-            (model, None, AuthHeader::XApiKey)
+            (model, None, AuthHeader::XApiKey, HashMap::new())
+        };
+
+        // Determine API format - Kimi uses OpenAI format, others use Anthropic
+        let api_format = if provider == ProviderId::Kimi {
+            ApiFormat::OpenAI
+        } else {
+            ApiFormat::Anthropic
         };
 
         let config = AiClientConfig {
@@ -76,7 +90,8 @@ impl PromptProcessor {
             base_url,
             auth_header,
             provider_id: provider,
-            api_format: ApiFormat::Anthropic, // All supported providers use Anthropic-compatible API
+            api_format,
+            custom_headers,
         };
 
         self.ai_client = Some(AiClient::new(config, api_key));

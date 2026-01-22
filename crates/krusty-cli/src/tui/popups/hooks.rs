@@ -11,7 +11,9 @@ use ratatui::{
     Frame,
 };
 
-use super::common::{center_rect, popup_block, popup_title, render_popup_background, PopupSize};
+use super::common::{
+    center_rect, popup_block, popup_title, render_popup_background, scroll_indicator, PopupSize,
+};
 use crate::agent::{UserHook, UserHookType};
 use crate::tui::themes::Theme;
 use crate::tui::utils::truncate_ellipsis;
@@ -135,7 +137,10 @@ impl HooksPopup {
     }
 
     fn ensure_visible(&mut self) {
-        let visible_height = 8;
+        self.ensure_visible_with_height(8);
+    }
+
+    fn ensure_visible_with_height(&mut self, visible_height: usize) {
         if self.selected_index < self.scroll_offset {
             self.scroll_offset = self.selected_index;
         } else if self.selected_index >= self.scroll_offset + visible_height {
@@ -361,6 +366,19 @@ impl HooksPopup {
         // Content - list of hooks + "Add new"
         let mut lines = Vec::new();
 
+        // Calculate visible items (each hook takes 2 lines, plus "Add new" takes 2 lines)
+        let content_height = chunks[1].height as usize;
+        // Reserve space for scroll indicators and "Add new" section
+        let visible_item_height = content_height.saturating_sub(4) / 2; // Each hook takes 2 lines
+        let visible_height = visible_item_height.max(1);
+
+        // Scroll indicator (up)
+        if self.scroll_offset > 0 {
+            lines.push(scroll_indicator("up", self.scroll_offset, theme));
+        } else {
+            lines.push(Line::from("")); // Maintain spacing
+        }
+
         if self.hooks.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  No hooks configured",
@@ -368,7 +386,13 @@ impl HooksPopup {
             )));
             lines.push(Line::from(""));
         } else {
-            for (i, hook) in self.hooks.iter().enumerate() {
+            for (i, hook) in self
+                .hooks
+                .iter()
+                .enumerate()
+                .skip(self.scroll_offset)
+                .take(visible_height)
+            {
                 let is_selected = i == self.selected_index;
                 let prefix = if is_selected { "› " } else { "  " };
                 let status = if hook.enabled { "●" } else { "○" };
@@ -405,9 +429,18 @@ impl HooksPopup {
                     ),
                 ]));
             }
+
+            // Scroll indicator (down) - for hooks only, not including "Add new"
+            let remaining = self
+                .hooks
+                .len()
+                .saturating_sub(self.scroll_offset + visible_height);
+            if remaining > 0 {
+                lines.push(scroll_indicator("down", remaining, theme));
+            }
         }
 
-        // "Add new" option
+        // "Add new" option (always visible at bottom)
         lines.push(Line::from(""));
         let is_add_selected = self.selected_index == self.hooks.len();
         let add_style = if is_add_selected {

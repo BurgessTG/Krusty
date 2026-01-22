@@ -8,7 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use super::common::{center_rect, popup_block, render_popup_background, PopupSize};
+use super::common::{
+    center_rect, popup_block, render_popup_background, scroll_indicator, PopupSize,
+};
 use crate::tui::themes::Theme;
 
 /// Help popup state
@@ -80,16 +82,41 @@ impl HelpPopup {
         let tabs_widget = Paragraph::new(Line::from(tab_spans)).alignment(Alignment::Center);
         f.render_widget(tabs_widget, chunks[0]);
 
-        // Content based on tab
-        let content = match self.tab_index {
+        // Content based on tab with scroll indicators
+        let all_content = match self.tab_index {
             0 => self.commands_content(theme),
             1 => self.keybinds_content(theme),
             _ => vec![],
         };
 
-        let content_widget = Paragraph::new(content)
-            .style(Style::default().bg(theme.bg_color))
-            .scroll((self.scroll_offset as u16, 0));
+        let total_lines = all_content.len();
+        // Reserve space for scroll indicators
+        let visible_height = (chunks[1].height as usize).saturating_sub(2);
+
+        let mut display_lines: Vec<Line> = Vec::new();
+
+        // Scroll indicator (up)
+        if self.scroll_offset > 0 {
+            display_lines.push(scroll_indicator("up", self.scroll_offset, theme));
+        }
+
+        // Visible content
+        for line in all_content
+            .into_iter()
+            .skip(self.scroll_offset)
+            .take(visible_height)
+        {
+            display_lines.push(line);
+        }
+
+        // Scroll indicator (down)
+        let remaining = total_lines.saturating_sub(self.scroll_offset + visible_height);
+        if remaining > 0 {
+            display_lines.push(scroll_indicator("down", remaining, theme));
+        }
+
+        let content_widget =
+            Paragraph::new(display_lines).style(Style::default().bg(theme.bg_color));
         f.render_widget(content_widget, chunks[1]);
 
         // Footer

@@ -8,7 +8,9 @@ use ratatui::{
     Frame,
 };
 
-use super::common::{center_rect, popup_block, popup_title, render_popup_background, PopupSize};
+use super::common::{
+    center_rect, popup_block, popup_title, render_popup_background, scroll_indicator, PopupSize,
+};
 use crate::ai::providers::{builtin_providers, ProviderId};
 use crate::tui::themes::Theme;
 
@@ -16,7 +18,10 @@ use crate::tui::themes::Theme;
 #[derive(Debug, Clone)]
 pub enum AuthState {
     /// Select which provider to configure
-    ProviderSelection { selected_index: usize },
+    ProviderSelection {
+        selected_index: usize,
+        scroll_offset: usize,
+    },
     /// Enter API key for any provider
     ApiKeyInput {
         provider: ProviderId,
@@ -29,7 +34,10 @@ pub enum AuthState {
 
 impl Default for AuthState {
     fn default() -> Self {
-        Self::ProviderSelection { selected_index: 0 }
+        Self::ProviderSelection {
+            selected_index: 0,
+            scroll_offset: 0,
+        }
     }
 }
 
@@ -65,26 +73,43 @@ impl AuthPopup {
 
     /// Navigate up in provider list
     pub fn prev_provider(&mut self) {
-        if let AuthState::ProviderSelection { selected_index } = &mut self.state {
+        if let AuthState::ProviderSelection { selected_index, .. } = &mut self.state {
             if *selected_index > 0 {
                 *selected_index -= 1;
+                self.ensure_visible(10); // Use reasonable visible height
             }
         }
     }
 
     /// Navigate down in provider list
     pub fn next_provider(&mut self) {
-        if let AuthState::ProviderSelection { selected_index } = &mut self.state {
+        if let AuthState::ProviderSelection { selected_index, .. } = &mut self.state {
             let providers = builtin_providers();
             if *selected_index < providers.len() - 1 {
                 *selected_index += 1;
+                self.ensure_visible(10); // Use reasonable visible height
+            }
+        }
+    }
+
+    /// Ensure selected item is visible within scroll window
+    fn ensure_visible(&mut self, visible_height: usize) {
+        if let AuthState::ProviderSelection {
+            selected_index,
+            scroll_offset,
+        } = &mut self.state
+        {
+            if *selected_index < *scroll_offset {
+                *scroll_offset = *selected_index;
+            } else if *selected_index >= *scroll_offset + visible_height {
+                *scroll_offset = *selected_index - visible_height + 1;
             }
         }
     }
 
     /// Confirm provider selection - go to API key input
     pub fn confirm_provider(&mut self) {
-        if let AuthState::ProviderSelection { selected_index } = &self.state {
+        if let AuthState::ProviderSelection { selected_index, .. } = &self.state {
             let providers = builtin_providers();
             if let Some(provider) = providers.get(*selected_index) {
                 self.state = AuthState::ApiKeyInput {
@@ -99,7 +124,10 @@ impl AuthPopup {
     /// Go back to provider selection
     pub fn go_back(&mut self) {
         if let AuthState::ApiKeyInput { .. } = &self.state {
-            self.state = AuthState::ProviderSelection { selected_index: 0 };
+            self.state = AuthState::ProviderSelection {
+                selected_index: 0,
+                scroll_offset: 0,
+            };
         }
     }
 
@@ -134,9 +162,10 @@ impl AuthPopup {
 
     pub fn render(&self, f: &mut Frame, theme: &Theme) {
         match &self.state {
-            AuthState::ProviderSelection { selected_index } => {
-                self.render_provider_selection(f, theme, *selected_index)
-            }
+            AuthState::ProviderSelection {
+                selected_index,
+                scroll_offset,
+            } => self.render_provider_selection(f, theme, *selected_index, *scroll_offset),
             AuthState::ApiKeyInput {
                 provider,
                 input,
@@ -146,7 +175,13 @@ impl AuthPopup {
         }
     }
 
-    fn render_provider_selection(&self, f: &mut Frame, theme: &Theme, selected_index: usize) {
+    fn render_provider_selection(
+        &self,
+        f: &mut Frame,
+        theme: &Theme,
+        selected_index: usize,
+        scroll_offset: usize,
+    ) {
         let (w, h) = PopupSize::Medium.dimensions();
         let area = center_rect(w, h, f.area());
         render_popup_background(f, area, theme);
@@ -169,11 +204,28 @@ impl AuthPopup {
         let title = Paragraph::new(title_lines).alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
-        // Provider list
+        // Provider list - simplified to one line per provider
         let providers = builtin_providers();
         let mut lines = Vec::new();
 
-        for (i, provider) in providers.iter().enumerate() {
+        // Calculate visible height (content area minus potential scroll indicators)
+        let content_height = chunks[1].height as usize;
+        let visible_height = content_height.saturating_sub(2); // Leave room for scroll indicators
+
+        // Scroll indicator (up)
+        if scroll_offset > 0 {
+            lines.push(scroll_indicator("up", scroll_offset, theme));
+        } else {
+            lines.push(Line::from("")); // Empty line to maintain spacing
+        }
+
+        // Render visible providers
+        for (i, provider) in providers
+            .iter()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_height)
+        {
             let is_selected = i == selected_index;
             let is_configured = self.configured_providers.contains(&provider.id);
 
@@ -190,30 +242,19 @@ impl AuthPopup {
 
             let configured_style = Style::default().fg(theme.success_color);
 
-            // Provider name with pricing hint
-            let pricing = provider
-                .pricing_hint
-                .as_ref()
-                .map(|p| format!(" ({})", p))
-                .unwrap_or_default();
-
             lines.push(Line::from(vec![
                 Span::styled(prefix.to_string(), style),
                 Span::styled(provider.name.clone(), style),
-                Span::styled(pricing, Style::default().fg(theme.dim_color)),
                 Span::styled(suffix.to_string(), configured_style),
             ]));
+        }
 
-            // Description
-            lines.push(Line::from(vec![
-                Span::styled("      ".to_string(), Style::default()),
-                Span::styled(
-                    provider.description.clone(),
-                    Style::default().fg(theme.dim_color),
-                ),
-            ]));
-
-            lines.push(Line::from(""));
+        // Scroll indicator (down)
+        let remaining = providers
+            .len()
+            .saturating_sub(scroll_offset + visible_height);
+        if remaining > 0 {
+            lines.push(scroll_indicator("down", remaining, theme));
         }
 
         let content = Paragraph::new(lines);

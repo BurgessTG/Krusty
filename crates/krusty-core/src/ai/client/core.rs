@@ -155,6 +155,11 @@ impl AiClient {
         // Common headers
         request = request.header("content-type", "application/json");
 
+        // Add custom headers (e.g., User-Agent for Kimi)
+        for (key, value) in &self.config.custom_headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+
         request
     }
 

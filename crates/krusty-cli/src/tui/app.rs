@@ -1000,15 +1000,17 @@ impl App {
             .unwrap_or_else(|| get_provider(ProviderId::Anthropic).unwrap());
 
         // Determine API format based on provider
-        // Only OpenCode Zen needs model-specific format routing (Anthropic/OpenAI/Google)
-        // All other providers use Anthropic-compatible format
-        let api_format = if self.active_provider == ProviderId::OpenCodeZen {
-            self.model_registry
+        // - OpenCode Zen: model-specific format routing (Anthropic/OpenAI/Google)
+        // - Kimi: uses OpenAI chat/completions format
+        // - All others: Anthropic-compatible format
+        let api_format = match self.active_provider {
+            ProviderId::OpenCodeZen => self
+                .model_registry
                 .try_get_model(&self.current_model)
                 .map(|m| m.api_format)
-                .unwrap_or(ApiFormat::Anthropic)
-        } else {
-            ApiFormat::Anthropic
+                .unwrap_or(ApiFormat::Anthropic),
+            ProviderId::Kimi => ApiFormat::OpenAI, // Kimi Code uses OpenAI format
+            _ => ApiFormat::Anthropic,
         };
 
         crate::ai::client::AiClientConfig {
@@ -1018,6 +1020,7 @@ impl App {
             auth_header: provider.auth_header,
             provider_id: provider.id,
             api_format,
+            custom_headers: provider.custom_headers.clone(),
         }
     }
 

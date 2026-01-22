@@ -2,6 +2,8 @@
 //!
 //! Provider-agnostic configuration for AI API clients.
 
+use std::collections::HashMap;
+
 use crate::ai::models::ApiFormat;
 use crate::ai::providers::{AuthHeader, ProviderId};
 use crate::constants;
@@ -21,6 +23,8 @@ pub struct AiClientConfig {
     pub provider_id: ProviderId,
     /// API format for this model (Anthropic, OpenAI, Google)
     pub api_format: ApiFormat,
+    /// Custom headers to send with requests (e.g., User-Agent for Kimi)
+    pub custom_headers: HashMap<String, String>,
 }
 
 impl Default for AiClientConfig {
@@ -32,6 +36,7 @@ impl Default for AiClientConfig {
             auth_header: AuthHeader::XApiKey,
             provider_id: ProviderId::Anthropic,
             api_format: ApiFormat::Anthropic,
+            custom_headers: HashMap::new(),
         }
     }
 }

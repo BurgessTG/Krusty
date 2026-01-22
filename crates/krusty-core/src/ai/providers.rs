@@ -4,6 +4,7 @@
 //! for Anthropic-compatible API endpoints.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::LazyLock;
 
@@ -140,6 +141,9 @@ pub struct ProviderConfig {
     pub dynamic_models: bool,
     /// Pricing hint to show in UI (e.g., "~1% of Claude")
     pub pricing_hint: Option<String>,
+    /// Custom headers to send with requests (e.g., User-Agent for Kimi)
+    #[serde(default)]
+    pub custom_headers: HashMap<String, String>,
 }
 
 impl ProviderConfig {
@@ -385,6 +389,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             supports_tools: true,
             dynamic_models: false,
             pricing_hint: None,
+            custom_headers: HashMap::new(),
         },
         // OpenRouter - access to 100+ models (Anthropic-compatible "skin")
         ProviderConfig {
@@ -487,6 +492,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             supports_tools: true,
             dynamic_models: true,
             pricing_hint: None,
+            custom_headers: HashMap::new(),
         },
         // OpenCode Zen - curated models for coding agents (Anthropic-compatible)
         ProviderConfig {
@@ -518,6 +524,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             supports_tools: true,
             dynamic_models: true,
             pricing_hint: None,
+            custom_headers: HashMap::new(),
         },
         // Z.ai - GLM Coding Plan (Anthropic-compatible endpoint)
         ProviderConfig {
@@ -533,6 +540,7 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             supports_tools: true,
             dynamic_models: false,
             pricing_hint: None,
+            custom_headers: HashMap::new(),
         },
         // MiniMax - M2 models (Anthropic-compatible API)
         ProviderConfig {
@@ -560,22 +568,30 @@ static BUILTIN_PROVIDERS: LazyLock<Vec<ProviderConfig>> = LazyLock::new(|| {
             supports_tools: true,
             dynamic_models: false,
             pricing_hint: None,
+            custom_headers: HashMap::new(),
         },
-        // Kimi/Moonshot - K2 models (Anthropic-compatible API)
+        // Kimi Code - Coding agent API (OpenAI-compatible format)
+        // API: api.kimi.com/coding/v1 (requires KimiCLI User-Agent)
+        // Auth: Bearer token
+        // Note: sk-kimi-* keys are for api.kimi.com, not api.moonshot.ai
         ProviderConfig {
             id: ProviderId::Kimi,
             name: "Kimi".to_string(),
-            description: "K2 models (256K context, agentic)".to_string(),
-            base_url: "https://api.moonshot.ai/anthropic/v1/messages".to_string(), // Full path required
-            auth_header: AuthHeader::XApiKey, // Anthropic-compatible endpoint uses x-api-key
+            description: "Kimi Code (262K context, coding agent)".to_string(),
+            base_url: "https://api.kimi.com/coding/v1/chat/completions".to_string(),
+            auth_header: AuthHeader::Bearer,
             models: vec![
-                ModelInfo::new("kimi-k2-0905-preview", "Kimi K2", 256_000, 16_384),
-                ModelInfo::new("kimi-k2-thinking", "Kimi K2 Thinking", 256_000, 16_384)
-                    .with_anthropic_thinking(),
+                // kimi-for-coding: 262K context, supports reasoning
+                ModelInfo::new("kimi-for-coding", "Kimi For Coding", 262_144, 16_384)
+                    .with_anthropic_thinking(), // Uses reasoning mode
             ],
             supports_tools: true,
             dynamic_models: false,
             pricing_hint: None,
+            custom_headers: HashMap::from([
+                // Required: Kimi Code API checks User-Agent for coding agent access
+                ("User-Agent".to_string(), "KimiCLI/1.0".to_string()),
+            ]),
         },
     ]
 });
