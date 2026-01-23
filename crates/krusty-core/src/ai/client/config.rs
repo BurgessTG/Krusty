@@ -99,6 +99,11 @@ impl AiClientConfig {
         matches!(self.api_format, ApiFormat::Google)
     }
 
+    /// Check if this config uses ChatGPT Codex (Responses API) format
+    pub fn uses_chatgpt_codex_format(&self) -> bool {
+        matches!(self.api_format, ApiFormat::OpenAIResponses)
+    }
+
     /// Check if this provider uses Anthropic-compatible API
     ///
     /// All providers (Anthropic, OpenRouter, Z.ai, MiniMax, Kimi) use Anthropic Messages API

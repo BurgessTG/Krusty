@@ -38,7 +38,12 @@ pub async fn generate_title(client: &AiClient, first_message: &str) -> String {
     let truncated: String = first_message.chars().take(500).collect();
 
     // Get the right model for this provider
-    let model = get_title_model(client.provider_id());
+    // For ChatGPT Codex, we must use the conversation model (gpt-4o-mini isn't supported)
+    let model = if client.config().uses_chatgpt_codex_format() {
+        client.config().model.as_str()
+    } else {
+        get_title_model(client.provider_id())
+    };
 
     match client
         .call_simple(model, TITLE_SYSTEM_PROMPT, &truncated, 30)
@@ -101,7 +106,12 @@ pub async fn generate_pinch_title(
     let truncated: String = context.chars().take(800).collect();
 
     // Get the right model for this provider
-    let model = get_title_model(client.provider_id());
+    // For ChatGPT Codex, we must use the conversation model
+    let model = if client.config().uses_chatgpt_codex_format() {
+        client.config().model.as_str()
+    } else {
+        get_title_model(client.provider_id())
+    };
 
     match client
         .call_simple(model, PINCH_TITLE_PROMPT, &truncated, 30)

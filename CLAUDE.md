@@ -18,7 +18,8 @@ Both commands must pass without errors for CI to succeed.
 
 - `crates/krusty-cli/` - CLI application with TUI
 - `crates/krusty-core/` - Core library (AI providers, tools, ACP, storage)
-- `krusty-zed-extension/` - Zed editor extension
+
+Note: The Zed editor extension is in a separate repository.
 
 ## Building
 
@@ -37,7 +38,7 @@ cargo test --workspace
 Krusty supports the Agent Client Protocol (ACP) for editor integrations:
 
 ```bash
-krusty --acp
+krusty acp
 ```
 
 Environment variables for ACP:

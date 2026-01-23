@@ -99,6 +99,9 @@ impl AcpServer {
         // Note: ACP connections are not Send, so we need LocalSet
         let local = LocalSet::new();
 
+        // Clone agent reference for cleanup after connection closes
+        let agent_for_cleanup = Arc::clone(&self.agent);
+
         local
             .run_until(async move {
                 // Create notification channel
@@ -135,6 +138,16 @@ impl AcpServer {
                 if let Err(e) = io_task.await {
                     error!("ACP connection error: {}", e);
                     return Err(anyhow::anyhow!("ACP connection error: {}", e));
+                }
+
+                // Clean up sessions on disconnect
+                let session_ids = agent_for_cleanup.sessions().session_ids();
+                let session_count = session_ids.len();
+                for id in session_ids {
+                    agent_for_cleanup.sessions().remove_session(&id);
+                }
+                if session_count > 0 {
+                    info!("Cleaned up {} sessions on disconnect", session_count);
                 }
 
                 info!("ACP connection closed");

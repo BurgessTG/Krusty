@@ -5,19 +5,24 @@
 //! - MCP server configurations
 //! - Conversation history
 //! - Cancellation state
+//! - Optional persistence to SQLite via storage::SessionManager
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::{McpServer, SessionId};
 use dashmap::DashMap;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::error::AcpError;
-use crate::ai::types::ModelMessage;
+use crate::ai::types::{ModelMessage, Role};
+use crate::storage::SessionManager as StorageSessionManager;
 use crate::tools::ToolContext;
+
+/// Thread-safe wrapper for storage session manager
+pub type StorageHandle = Arc<Mutex<StorageSessionManager>>;
 
 /// Session state for a single ACP session
 pub struct SessionState {
@@ -35,11 +40,25 @@ pub struct SessionState {
     cancelled: AtomicBool,
     /// Tool context for this session
     pub tool_context: RwLock<Option<ToolContext>>,
+    /// Storage session ID for persistence (links to SQLite storage)
+    storage_session_id: RwLock<Option<String>>,
+    /// Reference to storage manager for persisting messages
+    storage: Option<StorageHandle>,
 }
 
 impl SessionState {
     /// Create a new session state
     pub fn new(id: SessionId, cwd: Option<PathBuf>, mcp_servers: Option<Vec<McpServer>>) -> Self {
+        Self::with_storage(id, cwd, mcp_servers, None)
+    }
+
+    /// Create a new session state with optional storage backend
+    pub fn with_storage(
+        id: SessionId,
+        cwd: Option<PathBuf>,
+        mcp_servers: Option<Vec<McpServer>>,
+        storage: Option<StorageHandle>,
+    ) -> Self {
         let working_dir =
             cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
 
@@ -53,6 +72,8 @@ impl SessionState {
             messages: RwLock::new(Vec::new()),
             cancelled: AtomicBool::new(false),
             tool_context: RwLock::new(None),
+            storage_session_id: RwLock::new(None),
+            storage,
         }
     }
 
@@ -82,9 +103,126 @@ impl SessionState {
         self.mode.read().await.clone()
     }
 
-    /// Add a message to the conversation
+    /// Add a message to the conversation and persist to storage if available
     pub async fn add_message(&self, message: ModelMessage) {
-        self.messages.write().await.push(message);
+        self.messages.write().await.push(message.clone());
+        self.persist_message(&message).await;
+    }
+
+    /// Persist a message to storage (if storage is configured)
+    async fn persist_message(&self, message: &ModelMessage) {
+        if let Some(ref storage) = self.storage {
+            let storage_id = self.storage_session_id.read().await;
+            if let Some(ref session_id) = *storage_id {
+                let role = match message.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                };
+                match serde_json::to_string(&message.content) {
+                    Ok(content_json) => {
+                        if let Ok(storage) = storage.lock() {
+                            if let Err(e) = storage.save_message(session_id, role, &content_json) {
+                                warn!("Failed to persist message to storage: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to serialize message content: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Initialize storage session (creates a new persistent session)
+    pub async fn init_storage_session(&self, title: &str) -> Option<String> {
+        if let Some(ref storage) = self.storage {
+            let working_dir = self.cwd.to_string_lossy();
+            let result = {
+                let storage = storage.lock().ok()?;
+                storage.create_session(title, None, Some(&working_dir))
+            };
+            match result {
+                Ok(id) => {
+                    *self.storage_session_id.write().await = Some(id.clone());
+                    info!("Created storage session {} for ACP session {}", id, self.id);
+                    Some(id)
+                }
+                Err(e) => {
+                    warn!("Failed to create storage session: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Link to an existing storage session
+    pub async fn link_storage_session(&self, storage_id: String) {
+        *self.storage_session_id.write().await = Some(storage_id);
+    }
+
+    /// Load messages from storage into this session
+    pub async fn load_from_storage(&self, storage_session_id: &str) -> Result<(), AcpError> {
+        let storage = self.storage.as_ref().ok_or_else(|| {
+            AcpError::InternalError("No storage configured for session".to_string())
+        })?;
+
+        let raw_messages = {
+            let storage = storage.lock().map_err(|e| {
+                AcpError::InternalError(format!("Failed to acquire storage lock: {}", e))
+            })?;
+            storage
+                .load_session_messages(storage_session_id)
+                .map_err(|e| {
+                    AcpError::InternalError(format!("Failed to load messages from storage: {}", e))
+                })?
+        };
+
+        let mut messages = self.messages.write().await;
+        messages.clear();
+
+        for (role_str, content_json) in raw_messages {
+            let role = match role_str.as_str() {
+                "system" => Role::System,
+                "user" => Role::User,
+                "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
+                _ => {
+                    warn!("Unknown role '{}' in stored message, skipping", role_str);
+                    continue;
+                }
+            };
+
+            match serde_json::from_str(&content_json) {
+                Ok(content) => {
+                    messages.push(ModelMessage { role, content });
+                }
+                Err(e) => {
+                    warn!("Failed to deserialize message content: {}", e);
+                }
+            }
+        }
+
+        // Link to this storage session
+        drop(messages); // Release write lock before acquiring another
+        *self.storage_session_id.write().await = Some(storage_session_id.to_string());
+
+        info!(
+            "Loaded {} messages from storage session {}",
+            self.messages.read().await.len(),
+            storage_session_id
+        );
+
+        Ok(())
+    }
+
+    /// Get the storage session ID if linked
+    pub async fn get_storage_session_id(&self) -> Option<String> {
+        self.storage_session_id.read().await.clone()
     }
 
     /// Get all messages
@@ -174,15 +312,32 @@ pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionState>>,
     /// Counter for generating session IDs
     next_id: AtomicU64,
+    /// Optional storage backend for session persistence
+    storage: Option<StorageHandle>,
 }
 
 impl SessionManager {
-    /// Create a new session manager
+    /// Create a new session manager without storage
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
             next_id: AtomicU64::new(1),
+            storage: None,
         }
+    }
+
+    /// Create a new session manager with storage backend
+    pub fn with_storage(storage: StorageHandle) -> Self {
+        Self {
+            sessions: DashMap::new(),
+            next_id: AtomicU64::new(1),
+            storage: Some(storage),
+        }
+    }
+
+    /// Get reference to storage handle if configured
+    pub fn storage(&self) -> Option<&StorageHandle> {
+        self.storage.as_ref()
     }
 
     /// Create a new session
@@ -192,12 +347,50 @@ impl SessionManager {
         mcp_servers: Option<Vec<McpServer>>,
     ) -> Arc<SessionState> {
         let id = SessionId::from(self.next_id.fetch_add(1, Ordering::SeqCst).to_string());
-        let session = Arc::new(SessionState::new(id.clone(), cwd, mcp_servers));
+        let session = Arc::new(SessionState::with_storage(
+            id.clone(),
+            cwd,
+            mcp_servers,
+            self.storage.clone(),
+        ));
 
         info!("Created new session: {}", id);
         self.sessions.insert(id, Arc::clone(&session));
 
         session
+    }
+
+    /// Create a session and restore from storage
+    pub async fn create_session_from_storage(
+        &self,
+        storage_session_id: &str,
+        cwd: Option<PathBuf>,
+        mcp_servers: Option<Vec<McpServer>>,
+    ) -> Result<Arc<SessionState>, AcpError> {
+        if self.storage.is_none() {
+            return Err(AcpError::InternalError(
+                "No storage configured for session manager".to_string(),
+            ));
+        }
+
+        let id = SessionId::from(self.next_id.fetch_add(1, Ordering::SeqCst).to_string());
+        let session = Arc::new(SessionState::with_storage(
+            id.clone(),
+            cwd,
+            mcp_servers,
+            self.storage.clone(),
+        ));
+
+        // Load messages from storage
+        session.load_from_storage(storage_session_id).await?;
+
+        info!(
+            "Created session {} from storage session {}",
+            id, storage_session_id
+        );
+        self.sessions.insert(id, Arc::clone(&session));
+
+        Ok(session)
     }
 
     /// Get an existing session
@@ -282,5 +475,60 @@ mod tests {
         let fake_id = SessionId::from("nonexistent".to_string());
         assert!(!manager.has_session(&fake_id));
         assert!(manager.get_session(&fake_id).is_err());
+    }
+
+    #[tokio::test]
+    async fn test_session_with_storage() {
+        use crate::storage::Database;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+        let storage = Arc::new(Mutex::new(StorageSessionManager::new(db)));
+
+        let manager = SessionManager::with_storage(storage);
+        let session = manager.create_session(Some(PathBuf::from("/test")), None);
+
+        // Initialize storage session
+        let storage_id = session.init_storage_session("Test Session").await;
+        assert!(storage_id.is_some());
+
+        // Add a message
+        session.add_user_message("Hello, world!".to_string()).await;
+
+        // Verify storage session ID is set
+        let stored_id = session.get_storage_session_id().await;
+        assert_eq!(stored_id, storage_id);
+    }
+
+    #[tokio::test]
+    async fn test_session_load_from_storage() {
+        use crate::storage::Database;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+        let storage = Arc::new(Mutex::new(StorageSessionManager::new(db)));
+
+        // First, create a session and add messages
+        let manager = SessionManager::with_storage(Arc::clone(&storage));
+        let session1 = manager.create_session(Some(PathBuf::from("/test")), None);
+        let storage_id = session1.init_storage_session("Test Session").await.unwrap();
+        session1.add_user_message("First message".to_string()).await;
+        session1.add_assistant_message("Response".to_string()).await;
+
+        // Create a new session from storage
+        let session2 = manager
+            .create_session_from_storage(&storage_id, Some(PathBuf::from("/test")), None)
+            .await
+            .unwrap();
+
+        // Verify messages were loaded
+        let messages = session2.get_messages().await;
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::Assistant);
     }
 }

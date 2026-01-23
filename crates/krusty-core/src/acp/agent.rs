@@ -543,22 +543,59 @@ impl Agent for KrustyAgent {
     }
 
     /// Handle load session request
+    ///
+    /// Attempts to load a session from persistent storage if available.
+    /// Falls back to creating a new session if not found.
     async fn load_session(&self, request: LoadSessionRequest) -> AcpResult<LoadSessionResponse> {
         info!("ACP load_session: id={}", request.session_id);
 
-        // Check if session exists
-        if !self.sessions.has_session(&request.session_id) {
-            // Create a new session with the requested ID
-            // In a full implementation, we'd load from storage
-            warn!(
-                "Session {} not found, creating new session",
-                request.session_id
-            );
-
-            let _session = self.sessions.create_session(None, None);
+        // Check if session exists in memory
+        if self.sessions.has_session(&request.session_id) {
+            info!("Session {} found in memory", request.session_id);
+            return Ok(LoadSessionResponse::new());
         }
 
-        // LoadSessionResponse::new() takes no arguments
+        // Try to load from persistent storage if available
+        let session_id_str = request.session_id.to_string();
+
+        // Check storage for existing messages (scope the lock)
+        let has_stored_messages = if let Some(storage) = self.sessions.storage() {
+            let storage_lock = storage.lock().unwrap();
+            let messages = storage_lock.load_session_messages(&session_id_str);
+            matches!(messages, Ok(ref msgs) if !msgs.is_empty())
+        } else {
+            false
+        };
+
+        if has_stored_messages {
+            info!("Loading session {} from storage", session_id_str);
+            // Create session and restore from storage
+            match self
+                .sessions
+                .create_session_from_storage(&session_id_str, None, None)
+                .await
+            {
+                Ok(session) => {
+                    info!(
+                        "Session {} restored from storage with {} messages",
+                        session.id,
+                        session.get_messages().await.len()
+                    );
+                    return Ok(LoadSessionResponse::new());
+                }
+                Err(e) => {
+                    warn!("Failed to restore session from storage: {}", e);
+                }
+            }
+        }
+
+        // Fallback: create a new session
+        warn!(
+            "Session {} not found in memory or storage, creating new session",
+            request.session_id
+        );
+        let _session = self.sessions.create_session(None, None);
+
         Ok(LoadSessionResponse::new())
     }
 
