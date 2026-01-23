@@ -506,7 +506,7 @@ impl App {
             );
 
             // Save the updated plan
-            if let Err(e) = self.plan_manager.save_plan(active_plan) {
+            if let Err(e) = self.services.plan_manager.save_plan(active_plan) {
                 tracing::warn!("Failed to save merged plan: {}", e);
             } else {
                 tracing::info!(
@@ -523,17 +523,18 @@ impl App {
                 return;
             };
 
-            match self
-                .plan_manager
-                .create_plan(&parsed_plan.title, &session_id, Some(&working_dir))
-            {
+            match self.services.plan_manager.create_plan(
+                &parsed_plan.title,
+                &session_id,
+                Some(&working_dir),
+            ) {
                 Ok(mut new_plan) => {
                     // Copy phases from parsed plan
                     new_plan.phases = parsed_plan.phases;
                     new_plan.notes = parsed_plan.notes;
 
                     // Save with the full content
-                    if let Err(e) = self.plan_manager.save_plan(&new_plan) {
+                    if let Err(e) = self.services.plan_manager.save_plan(&new_plan) {
                         tracing::warn!("Failed to save new plan: {}", e);
                     } else {
                         tracing::info!("Created new plan: '{}'", new_plan.title);
@@ -607,7 +608,7 @@ impl App {
             }
 
             // Save the updated plan
-            if let Err(e) = self.plan_manager.save_plan(active_plan) {
+            if let Err(e) = self.services.plan_manager.save_plan(active_plan) {
                 tracing::warn!("Failed to save plan after task updates: {}", e);
             } else {
                 tracing::info!(
@@ -683,7 +684,7 @@ impl App {
             }
 
             // Save immediately for real-time persistence
-            if let Err(e) = self.plan_manager.save_plan(active_plan) {
+            if let Err(e) = self.services.plan_manager.save_plan(active_plan) {
                 tracing::warn!("Failed to save plan after real-time task update: {}", e);
             }
 
@@ -726,7 +727,7 @@ impl App {
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
 
-                if let Err(e) = self.plan_manager.save_plan(plan) {
+                if let Err(e) = self.services.plan_manager.save_plan(plan) {
                     tracing::warn!("Failed to save abandoned plan: {}", e);
                 }
 

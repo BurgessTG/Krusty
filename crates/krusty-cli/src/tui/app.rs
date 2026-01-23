@@ -39,9 +39,11 @@ use crate::process::ProcessRegistry;
 use crate::storage::{CredentialStore, Database, Preferences, SessionManager};
 use crate::tools::{register_all_tools, register_build_tool, register_explore_tool, ToolRegistry};
 use crate::tui::animation::MenuAnimator;
-use crate::tui::blocks::StreamBlock;
 use crate::tui::input::{AutocompletePopup, MultiLineInput};
 use crate::tui::markdown::MarkdownCache;
+use crate::tui::polling::{
+    poll_bash_output, poll_build_progress, poll_explore_progress, PollResult,
+};
 use crate::tui::state::PopupState;
 use crate::tui::state::{
     BlockManager, BlockUiStates, EdgeScrollState, HoverState, LayoutState, ScrollState,
@@ -95,6 +97,35 @@ impl WorkMode {
     }
 }
 
+/// Application services and external systems
+pub struct AppServices {
+    // Plan/session storage
+    pub plan_manager: PlanManager,
+    pub session_manager: Option<SessionManager>,
+    pub preferences: Option<Preferences>,
+
+    // Credentials/models
+    pub credential_store: CredentialStore,
+    pub model_registry: SharedModelRegistry,
+
+    // Tool system
+    pub tool_registry: Arc<ToolRegistry>,
+    pub cached_ai_tools: Vec<AiTool>,
+    pub user_hook_manager: Arc<RwLock<UserHookManager>>,
+
+    // LSP/Extensions
+    pub lsp_manager: Arc<LspManager>,
+    pub lsp_skip_list: std::collections::HashSet<String>,
+    pub pending_lsp_install: Option<crate::lsp::manager::MissingLspInfo>,
+    pub wasm_host: Option<Arc<WasmHost>>,
+
+    // Skills/MCP
+    pub skills_manager: Arc<RwLock<SkillsManager>>,
+    pub mcp_manager: Arc<krusty_core::mcp::McpManager>,
+    pub mcp_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::McpStatusUpdate>,
+    pub oauth_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::OAuthStatusUpdate>,
+}
+
 /// Application state
 pub struct App {
     pub view: View,
@@ -104,7 +135,8 @@ pub struct App {
     pub popup: Popup,
     pub work_mode: WorkMode,
     pub active_plan: Option<PlanFile>,
-    pub plan_manager: PlanManager,
+    pub services: AppServices,
+
     pub plan_sidebar: crate::tui::components::PlanSidebarState,
     pub decision_prompt: crate::tui::components::DecisionPrompt,
     pub should_quit: bool,
@@ -138,53 +170,21 @@ pub struct App {
 
     // Multi-provider support
     pub active_provider: ProviderId,
-    pub credential_store: CredentialStore,
-    pub model_registry: SharedModelRegistry,
-
-    // Tool system
-    pub tool_registry: Arc<ToolRegistry>,
-    pub cached_ai_tools: Vec<AiTool>,
-    /// User-configurable hooks
-    pub user_hook_manager: Arc<RwLock<UserHookManager>>,
-
-    // LSP Manager
-    pub lsp_manager: Arc<LspManager>,
-    /// Extensions to skip prompting for (user said "always skip")
-    pub lsp_skip_list: std::collections::HashSet<String>,
-    /// Pending LSP install prompt from tool execution
-    pub pending_lsp_install: Option<crate::lsp::manager::MissingLspInfo>,
 
     // Process Registry for background processes
     pub process_registry: Arc<ProcessRegistry>,
     pub running_process_count: usize,
     pub running_process_elapsed: Option<std::time::Duration>,
 
-    // Skills Manager
-    pub skills_manager: Arc<RwLock<SkillsManager>>,
-
-    // MCP Manager
-    pub mcp_manager: Arc<krusty_core::mcp::McpManager>,
-    /// Sender for MCP status updates from background tasks
-    pub mcp_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::McpStatusUpdate>,
-    /// Sender for OAuth status updates from background tasks
-    pub oauth_status_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::utils::OAuthStatusUpdate>,
-
-    // WASM Extension Host
-    pub wasm_host: Option<Arc<WasmHost>>,
-
     // Working directory
     pub working_dir: PathBuf,
 
     // Session management
-    pub session_manager: Option<SessionManager>,
     pub current_session_id: Option<String>,
     pub session_title: Option<String>,
 
     // Title editing state
     pub title_editor: TitleEditor,
-
-    // User preferences
-    pub preferences: Option<Preferences>,
 
     // Async channel receivers (LSP, tool results, bash output)
     pub channels: AsyncChannels,
@@ -469,6 +469,25 @@ impl App {
         channels.mcp_status = Some(mcp_status_rx);
         channels.oauth_status = Some(oauth_status_rx);
 
+        let services = AppServices {
+            plan_manager,
+            session_manager,
+            preferences,
+            credential_store,
+            model_registry,
+            tool_registry,
+            cached_ai_tools,
+            user_hook_manager,
+            lsp_manager,
+            lsp_skip_list: std::collections::HashSet::new(),
+            pending_lsp_install: None,
+            wasm_host,
+            skills_manager,
+            mcp_manager,
+            mcp_status_tx,
+            oauth_status_tx,
+        };
+
         Self {
             view: View::StartMenu,
             pending_view_change: None,
@@ -477,7 +496,7 @@ impl App {
             popup: Popup::None,
             work_mode: WorkMode::Build,
             active_plan: None,
-            plan_manager,
+            services,
             plan_sidebar: crate::tui::components::PlanSidebarState::default(),
             decision_prompt: crate::tui::components::DecisionPrompt::default(),
             should_quit: false,
@@ -499,28 +518,13 @@ impl App {
             ai_client: None,
             api_key: None,
             active_provider,
-            credential_store,
-            model_registry,
-            tool_registry,
-            cached_ai_tools,
-            user_hook_manager,
-            lsp_manager,
-            lsp_skip_list: std::collections::HashSet::new(),
-            pending_lsp_install: None,
             process_registry,
             running_process_count: 0,
             running_process_elapsed: None,
-            skills_manager,
-            mcp_manager,
-            mcp_status_tx,
-            oauth_status_tx,
-            wasm_host,
             working_dir,
-            session_manager,
             current_session_id: None,
             session_title: None,
             title_editor: TitleEditor::new(),
-            preferences,
             channels,
             init_explore_id: None,
             queued_tools: Vec::new(),
@@ -580,7 +584,11 @@ impl App {
     pub fn max_context_tokens(&self) -> usize {
         // First check dynamic ModelRegistry (OpenRouter models live here)
         // Use try_get_model() to avoid blocking during rendering
-        if let Some(metadata) = self.model_registry.try_get_model(&self.current_model) {
+        if let Some(metadata) = self
+            .services
+            .model_registry
+            .try_get_model(&self.current_model)
+        {
             return metadata.context_window;
         }
 
@@ -783,7 +791,7 @@ impl App {
 
             // Save to database
             if let (Some(manager), Some(session_id)) =
-                (&self.session_manager, &self.current_session_id)
+                (&self.services.session_manager, &self.current_session_id)
             {
                 let _ = manager.update_session_title(session_id, &new_title);
             }
@@ -792,7 +800,7 @@ impl App {
 
     /// Initialize language servers from loaded WASM extensions
     pub async fn initialize_extension_servers(&self) -> Result<()> {
-        let Some(wasm_host) = &self.wasm_host else {
+        let Some(wasm_host) = &self.services.wasm_host else {
             return Ok(());
         };
 
@@ -827,7 +835,7 @@ impl App {
     /// Register language servers for a single extension
     /// Used after installing extensions mid-session
     pub async fn register_extension_servers(&self, extension_path: &Path) -> Result<()> {
-        let Some(wasm_host) = &self.wasm_host else {
+        let Some(wasm_host) = &self.services.wasm_host else {
             return Ok(());
         };
 
@@ -890,6 +898,7 @@ impl App {
                     );
 
                     if let Err(e) = self
+                        .services
                         .lsp_manager
                         .register_from_extension(
                             &full_server_id,
@@ -960,7 +969,11 @@ impl App {
     /// Try to load existing authentication for the active provider
     pub async fn try_load_auth(&mut self) -> Result<()> {
         // Try credential store for all providers (API keys and OAuth tokens)
-        if let Some(key) = self.credential_store.get_auth(&self.active_provider) {
+        if let Some(key) = self
+            .services
+            .credential_store
+            .get_auth(&self.active_provider)
+        {
             let config = self.create_client_config();
             self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
@@ -980,20 +993,25 @@ impl App {
 
             // Register explore tool
             register_explore_tool(
-                &self.tool_registry,
+                &self.services.tool_registry,
                 client.clone(),
                 self.cancellation.clone(),
             )
             .await;
 
             // Register build tool (The Kraken)
-            register_build_tool(&self.tool_registry, client, self.cancellation.clone()).await;
+            register_build_tool(
+                &self.services.tool_registry,
+                client,
+                self.cancellation.clone(),
+            )
+            .await;
 
             // Update cached tools so API knows about explore and build
-            self.cached_ai_tools = self.tool_registry.get_ai_tools().await;
+            self.services.cached_ai_tools = self.services.tool_registry.get_ai_tools().await;
             tracing::info!(
                 "Registered explore and build tools, total tools: {}",
-                self.cached_ai_tools.len()
+                self.services.cached_ai_tools.len()
             );
         }
     }
@@ -1008,7 +1026,7 @@ impl App {
         if self.active_provider == ProviderId::OpenAI {
             return crate::ai::client::AiClientConfig::for_openai_with_auth_detection(
                 &self.current_model,
-                &self.credential_store,
+                &self.services.credential_store,
             );
         }
 
@@ -1021,6 +1039,7 @@ impl App {
         // - All others: Anthropic-compatible format
         let api_format = match self.active_provider {
             ProviderId::OpenCodeZen => self
+                .services
                 .model_registry
                 .try_get_model(&self.current_model)
                 .map(|m| m.api_format)
@@ -1056,8 +1075,10 @@ impl App {
         self.api_key = Some(key.clone());
 
         // Save to credential store (unified storage for all providers)
-        self.credential_store.set(self.active_provider, key);
-        if let Err(e) = self.credential_store.save() {
+        self.services
+            .credential_store
+            .set(self.active_provider, key);
+        if let Err(e) = self.services.credential_store.save() {
             tracing::warn!("Failed to save credential store: {}", e);
         }
     }
@@ -1090,7 +1111,7 @@ impl App {
             self.current_model = translated.clone();
 
             // Save translated model to preferences
-            if let Some(ref prefs) = self.preferences {
+            if let Some(ref prefs) = self.services.preferences {
                 if let Err(e) = prefs.set_current_model(&translated) {
                     tracing::warn!("Failed to save current model: {}", e);
                 }
@@ -1109,7 +1130,7 @@ impl App {
                 );
                 self.current_model = default.clone();
 
-                if let Some(ref prefs) = self.preferences {
+                if let Some(ref prefs) = self.services.preferences {
                     if let Err(e) = prefs.set_current_model(&default) {
                         tracing::warn!("Failed to save current model: {}", e);
                     }
@@ -1118,7 +1139,7 @@ impl App {
         }
 
         // Try to load credentials for the new provider (API key or OAuth token)
-        if let Some(key) = self.credential_store.get_auth(&provider_id) {
+        if let Some(key) = self.services.credential_store.get_auth(&provider_id) {
             let config = self.create_client_config();
             self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
             self.api_key = Some(key);
@@ -1140,12 +1161,18 @@ impl App {
     /// Get list of configured provider IDs (ones with API keys)
     pub fn configured_providers(&self) -> Vec<ProviderId> {
         // Use providers_with_auth to include both API key and OAuth-authenticated providers
-        self.credential_store.providers_with_auth()
+        self.services.credential_store.providers_with_auth()
     }
 
     /// Check if authenticated
     pub fn is_authenticated(&self) -> bool {
         self.ai_client.is_some()
+    }
+
+    /// Get the current theme
+    #[allow(dead_code)]
+    pub fn current_theme(&self) -> &Theme {
+        &self.theme
     }
 
     /// Set theme and persist to preferences
@@ -1159,7 +1186,7 @@ impl App {
         self.menu_animator.set_theme_color(accent_rgb);
 
         // Save to preferences
-        if let Some(ref prefs) = self.preferences {
+        if let Some(ref prefs) = self.services.preferences {
             if let Err(e) = prefs.set_theme(name) {
                 tracing::warn!("Failed to save theme preference: {}", e);
             }
@@ -1191,174 +1218,28 @@ impl App {
     }
 
     /// Poll bash output channel and update BashBlock with streaming output
-    fn poll_bash_output(&mut self) {
-        // Take the receiver temporarily to poll it
-        if let Some(mut rx) = self.channels.bash_output.take() {
-            // Poll all available chunks (non-blocking)
-            loop {
-                match rx.try_recv() {
-                    Ok(chunk) => {
-                        // Find the BashBlock with matching tool_use_id
-                        // First try to find by ID, then fall back to last
-                        let block_idx = self
-                            .blocks
-                            .bash
-                            .iter()
-                            .position(|b| b.tool_use_id() == Some(&chunk.tool_use_id))
-                            .or_else(|| {
-                                if self.blocks.bash.is_empty() {
-                                    None
-                                } else {
-                                    Some(self.blocks.bash.len() - 1)
-                                }
-                            });
-                        let block = block_idx.and_then(|i| self.blocks.bash.get_mut(i));
-
-                        if let Some(block) = block {
-                            if chunk.is_complete {
-                                // Mark block as complete with exit code
-                                let exit_code = chunk.exit_code.unwrap_or(0);
-                                tracing::info!(
-                                    tool_use_id = %chunk.tool_use_id,
-                                    exit_code = exit_code,
-                                    "Bash block complete signal received"
-                                );
-                                block.complete(exit_code);
-
-                                // Update ProcessRegistry status (fire and forget)
-                                let registry = self.process_registry.clone();
-                                let tool_id = chunk.tool_use_id.clone();
-                                tokio::spawn(async move {
-                                    let status = if exit_code == 0 {
-                                        crate::process::ProcessStatus::Completed {
-                                            exit_code,
-                                            duration_ms: 0, // Duration tracked by block
-                                        }
-                                    } else {
-                                        crate::process::ProcessStatus::Failed {
-                                            error: format!("Exit code: {}", exit_code),
-                                            duration_ms: 0,
-                                        }
-                                    };
-                                    registry.update_status(&tool_id, status).await;
-                                });
-                            } else if !chunk.chunk.is_empty() {
-                                // Append output chunk
-                                block.append(&chunk.chunk);
-                            }
-                        }
-                        if self.scroll.auto_scroll {
-                            self.scroll.request_scroll_to_bottom();
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                        // No more data available, put receiver back
-                        self.channels.bash_output = Some(rx);
-                        break;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        // Channel closed - complete any remaining streaming blocks
-                        // This usually means the tool finished but we missed the completion signal
-                        tracing::debug!("Bash output channel disconnected");
-                        for block in self.blocks.bash.iter_mut() {
-                            // Skip background blocks - they're tracked by ProcessRegistry
-                            if block.background_process_id().is_some() {
-                                continue;
-                            }
-                            if block.is_streaming() {
-                                tracing::info!("Completing bash block on channel disconnect (assuming success)");
-                                block.complete(0); // Assume success - channel disconnect usually means clean exit
-
-                                // Update ProcessRegistry if we have a tool_use_id
-                                if let Some(tool_id) = block.tool_use_id() {
-                                    let registry = self.process_registry.clone();
-                                    let tool_id = tool_id.to_string();
-                                    tokio::spawn(async move {
-                                        let status = crate::process::ProcessStatus::Completed {
-                                            exit_code: 0,
-                                            duration_ms: 0,
-                                        };
-                                        registry.update_status(&tool_id, status).await;
-                                    });
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-        }
+    fn poll_bash_output(&mut self) -> PollResult {
+        poll_bash_output(
+            &mut self.channels,
+            &mut self.blocks.bash,
+            &mut self.scroll,
+            &self.process_registry,
+        )
     }
 
     /// Poll explore progress channel and update ExploreBlock with agent progress
-    fn poll_explore_progress(&mut self) {
-        if let Some(mut rx) = self.channels.explore_progress.take() {
-            loop {
-                match rx.try_recv() {
-                    Ok(progress) => {
-                        // Find matching ExploreBlock by tool_use_id (derived from task_id prefix)
-                        // Task IDs are like "dir-0", "file-1", "main" - we find the parent explore block
-                        // by looking for blocks that are still streaming
-                        for block in self.blocks.explore.iter_mut() {
-                            if block.is_streaming() {
-                                block.update_progress(progress.clone());
-                                break;
-                            }
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                        self.channels.explore_progress = Some(rx);
-                        break;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        tracing::debug!("Explore progress channel disconnected");
-                        break;
-                    }
-                }
-            }
-        }
+    fn poll_explore_progress(&mut self) -> PollResult {
+        poll_explore_progress(&mut self.channels, &mut self.blocks.explore)
     }
 
     /// Poll build progress channel and update BuildBlock with builder progress
-    fn poll_build_progress(&mut self) {
-        if let Some(mut rx) = self.channels.build_progress.take() {
-            loop {
-                match rx.try_recv() {
-                    Ok(progress) => {
-                        // Find matching BuildBlock that is still streaming
-                        for block in self.blocks.build.iter_mut() {
-                            if block.is_streaming() {
-                                block.update_progress(progress.clone());
-                                break;
-                            }
-                        }
-
-                        // Auto-complete plan task if specified
-                        if let Some(ref task_id) = progress.completed_plan_task {
-                            if let Some(ref mut plan) = self.active_plan {
-                                if plan.check_task(task_id) {
-                                    tracing::debug!(task_id = %task_id, "Kraken auto-completed plan task");
-                                    if let Err(e) = self.plan_manager.save_plan(plan) {
-                                        tracing::warn!(
-                                            "Failed to save plan after task completion: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                        self.channels.build_progress = Some(rx);
-                        break;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        tracing::debug!("Build progress channel disconnected");
-                        break;
-                    }
-                }
-            }
-        }
+    fn poll_build_progress(&mut self) -> PollResult {
+        poll_build_progress(
+            &mut self.channels,
+            &mut self.blocks.build,
+            &mut self.active_plan,
+            &self.services.plan_manager,
+        )
     }
 
     /// Poll terminal panes for PTY output and update cursor animations
@@ -1556,11 +1437,12 @@ impl App {
 
                         // Refresh cached AI tools so new MCP tools are sent to the API
                         if update.success {
-                            self.cached_ai_tools =
-                                futures::executor::block_on(self.tool_registry.get_ai_tools());
+                            self.services.cached_ai_tools = futures::executor::block_on(
+                                self.services.tool_registry.get_ai_tools(),
+                            );
                             tracing::info!(
                                 "Refreshed AI tools after MCP update, total: {}",
-                                self.cached_ai_tools.len()
+                                self.services.cached_ai_tools.len()
                             );
                         }
                     }
@@ -1718,11 +1600,13 @@ impl App {
 
         // Start background refresh of OpenRouter models if configured and cache is stale
         if self
+            .services
             .credential_store
             .get(&crate::ai::providers::ProviderId::OpenRouter)
             .is_some()
         {
             let should_refresh = self
+                .services
                 .preferences
                 .as_ref()
                 .map(|p| p.is_openrouter_cache_stale())
@@ -1736,11 +1620,13 @@ impl App {
 
         // Start background refresh of OpenCode Zen models if configured and cache is stale
         if self
+            .services
             .credential_store
             .get(&crate::ai::providers::ProviderId::OpenCodeZen)
             .is_some()
         {
             let should_refresh = self
+                .services
                 .preferences
                 .as_ref()
                 .map(|p| p.is_opencodezen_cache_stale())
@@ -1754,7 +1640,10 @@ impl App {
 
         // Register built-in LSPs (downloads if needed)
         let downloader = crate::lsp::LspDownloader::new();
-        self.lsp_manager.register_all_builtins(&downloader).await;
+        self.services
+            .lsp_manager
+            .register_all_builtins(&downloader)
+            .await;
 
         // Then extension LSPs (can override built-ins)
         if let Err(e) = self.initialize_extension_servers().await {

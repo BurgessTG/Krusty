@@ -322,7 +322,10 @@ impl SseParser for AnthropicParser {
                 if let Some(delta) = json.get("delta") {
                     if let Some(stop_reason) = delta.get("stop_reason").and_then(|s| s.as_str()) {
                         let reason = parse_finish_reason(stop_reason);
-                        return Ok(SseEvent::Finish { reason });
+                        return Ok(SseEvent::Finish {
+                            reason,
+                            usage: None,
+                        });
                     }
                 }
 
@@ -396,6 +399,7 @@ impl SseParser for AnthropicParser {
 
             "message_stop" => Ok(SseEvent::Finish {
                 reason: FinishReason::Stop,
+                usage: None,
             }),
 
             "error" => {

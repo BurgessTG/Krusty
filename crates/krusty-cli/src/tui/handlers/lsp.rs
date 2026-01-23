@@ -49,7 +49,7 @@ impl App {
 
         let ext_id = ext.id.clone();
         let ext_dir = paths::extensions_dir();
-        let wasm_host = self.wasm_host.clone();
+        let wasm_host = self.services.wasm_host.clone();
 
         tokio::spawn(async move {
             let result = Self::download_and_install_extension(&ext_id, &ext_dir, wasm_host).await;
@@ -180,7 +180,7 @@ impl App {
     /// Install a built-in LSP server (from popup prompt)
     pub fn start_builtin_lsp_install(&mut self, builtin: &'static crate::lsp::builtin::BuiltinLsp) {
         let downloader = crate::lsp::LspDownloader::new();
-        let lsp_manager = self.lsp_manager.clone();
+        let lsp_manager = self.services.lsp_manager.clone();
         let builtin = builtin.clone();
 
         // Set up channel for result
@@ -209,7 +209,7 @@ impl App {
     /// Install an extension LSP from Zed marketplace (from popup prompt)
     pub fn start_extension_lsp_install(&mut self, ext_name: String) {
         let ext_dir = paths::extensions_dir();
-        let wasm_host = self.wasm_host.clone();
+        let wasm_host = self.services.wasm_host.clone();
 
         // Set up channel for result
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -296,16 +296,16 @@ impl App {
     /// IMPORTANT: This shows the popup IMMEDIATELY and pauses streaming.
     /// The popup interrupts the conversation to ask the user about LSP installation.
     pub fn poll_pending_lsp_install(&mut self) {
-        if let Some(missing) = self.pending_lsp_install.take() {
+        if let Some(missing) = self.services.pending_lsp_install.take() {
             // Don't prompt if user said "always skip" for this extension
-            if self.lsp_skip_list.contains(&missing.extension) {
+            if self.services.lsp_skip_list.contains(&missing.extension) {
                 return;
             }
 
             // Don't prompt if popup already open (prevents stacking)
             if self.popup != crate::tui::app::Popup::None {
                 // Put it back for later
-                self.pending_lsp_install = Some(missing);
+                self.services.pending_lsp_install = Some(missing);
                 return;
             }
 
@@ -361,8 +361,8 @@ impl App {
             match rx.try_recv() {
                 Ok(missing) => {
                     // Don't prompt if already have a pending install or popup open
-                    if self.pending_lsp_install.is_none() {
-                        self.pending_lsp_install = Some(missing);
+                    if self.services.pending_lsp_install.is_none() {
+                        self.services.pending_lsp_install = Some(missing);
                     }
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}

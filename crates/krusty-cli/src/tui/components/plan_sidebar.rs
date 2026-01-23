@@ -3,7 +3,6 @@
 //! Renders a collapsible sidebar showing the current plan's phases and tasks.
 //! Uses caching to avoid rebuilding content every frame.
 
-use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 
 use ratatui::{
@@ -30,6 +29,15 @@ pub const SIDEBAR_WIDTH: u16 = 76;
 
 /// Minimum terminal width to show sidebar
 pub const MIN_TERMINAL_WIDTH: u16 = 140;
+
+/// Horizontal padding inside sidebar content area
+const PAD_X: u16 = 2;
+
+/// Number of blank lines between phases
+const PHASE_GAP_LINES: usize = 2;
+
+/// Indentation for wrapped task continuation lines (aligns with description start)
+const TASK_CONTINUATION_INDENT: &str = "    ";
 
 /// Plan sidebar state with content caching
 #[derive(Debug, Clone, Default)]
@@ -208,44 +216,65 @@ pub fn render_plan_sidebar(
         };
     }
 
-    // Calculate total lines: phase headers + tasks + separators between phases
-    let total_lines = plan.phases.len()
-        + plan.phases.iter().map(|p| p.tasks.len()).sum::<usize>()
-        + plan.phases.len().saturating_sub(1);
-    state.total_lines = total_lines;
-
-    // Clamp scroll offset
     let visible_height = inner.height as usize;
-    let max_offset = total_lines.saturating_sub(visible_height);
-    if state.scroll_offset > max_offset {
-        state.scroll_offset = max_offset;
-    }
 
-    // Reserve space for scrollbar if needed
-    let content_width = if total_lines > visible_height {
-        inner.width.saturating_sub(2)
-    } else {
-        inner.width
-    };
+    // Always reserve scrollbar column to avoid reflow jitter when content grows
+    let content_area_width = inner.width.saturating_sub(1); // 1 for scrollbar
+    let wrap_width = content_area_width.saturating_sub(PAD_X * 2) as usize;
+
+    // Guard against extremely narrow widths
+    if wrap_width < 10 {
+        return PlanSidebarRenderResult {
+            scrollbar_area: None,
+        };
+    }
 
     // Check if we need to rebuild the cache
     let plan_hash = hash_plan(plan);
-    let cache_valid = state.cached_plan_hash == plan_hash && state.cached_width == content_width;
+    let cache_valid =
+        state.cached_plan_hash == plan_hash && state.cached_width == wrap_width as u16;
 
     if !cache_valid {
-        // Rebuild cached lines
+        // Rebuild cached lines with proper text wrapping
         state.cached_lines.clear();
 
+        // Plan title header (wrapped, bold, with separator)
+        let title_style = Style::default()
+            .fg(theme.title_color)
+            .add_modifier(Modifier::BOLD);
+
+        for wrapped_line in wrap_text(&plan.title, wrap_width) {
+            state
+                .cached_lines
+                .push(Line::from(Span::styled(wrapped_line, title_style)));
+        }
+
+        // Separator line after title
+        let separator = "─".repeat(wrap_width.min(40));
+        state.cached_lines.push(Line::from(Span::styled(
+            separator,
+            Style::default().fg(theme.border_color),
+        )));
+
+        // Blank line after separator
+        state.cached_lines.push(Line::from(""));
+
+        // Task prefix width: "  " + checkbox + " " = 4 columns
+        let task_prefix_width = 4usize;
+        let task_wrap_width = wrap_width.saturating_sub(task_prefix_width).max(10);
+
         for (i, phase) in plan.phases.iter().enumerate() {
-            // Phase header
+            // Phase header (wrapped)
             let phase_title = format!("Phase {}: {}", phase.number, phase.name);
-            let phase_title = truncate_str(&phase_title, content_width as usize - 1);
-            state.cached_lines.push(Line::from(vec![Span::styled(
-                phase_title.into_owned(),
-                Style::default()
-                    .fg(theme.accent_color)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+            let header_style = Style::default()
+                .fg(theme.accent_color)
+                .add_modifier(Modifier::BOLD);
+
+            for wrapped_line in wrap_text(&phase_title, wrap_width) {
+                state
+                    .cached_lines
+                    .push(Line::from(Span::styled(wrapped_line, header_style)));
+            }
 
             // Tasks
             for task in &phase.tasks {
@@ -255,50 +284,74 @@ pub fn render_plan_sidebar(
                 } else {
                     theme.dim_color
                 };
-
-                let desc = truncate_str(&task.description, content_width as usize - 4);
                 let task_style = if task.completed {
                     Style::default().fg(theme.dim_color)
                 } else {
                     Style::default().fg(theme.text_color)
                 };
 
-                state.cached_lines.push(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(checkbox, Style::default().fg(checkbox_color)),
-                    Span::raw(" "),
-                    Span::styled(desc.into_owned(), task_style),
-                ]));
+                let wrapped_desc = wrap_text(&task.description, task_wrap_width);
+
+                for (line_idx, desc_line) in wrapped_desc.into_iter().enumerate() {
+                    if line_idx == 0 {
+                        // First line: checkbox prefix
+                        state.cached_lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(checkbox, Style::default().fg(checkbox_color)),
+                            Span::raw(" "),
+                            Span::styled(desc_line, task_style),
+                        ]));
+                    } else {
+                        // Continuation lines: indented to align with description
+                        state.cached_lines.push(Line::from(vec![
+                            Span::raw(TASK_CONTINUATION_INDENT),
+                            Span::styled(desc_line, task_style),
+                        ]));
+                    }
+                }
             }
 
             // Space between phases (not after last)
             if i < plan.phases.len() - 1 {
-                state.cached_lines.push(Line::from(""));
+                for _ in 0..PHASE_GAP_LINES {
+                    state.cached_lines.push(Line::from(""));
+                }
             }
         }
 
         state.cached_plan_hash = plan_hash;
-        state.cached_width = content_width;
+        state.cached_width = wrap_width as u16;
     }
 
-    // Render visible lines from cache using slice
+    // Total lines is now based on actual wrapped content
+    state.total_lines = state.cached_lines.len();
+
+    // Clamp scroll offset
+    let max_offset = state.total_lines.saturating_sub(visible_height);
+    if state.scroll_offset > max_offset {
+        state.scroll_offset = max_offset;
+    }
+
+    // Render visible lines from cache using slice (with horizontal padding)
     let start = state.scroll_offset;
     let end = (start + visible_height).min(state.cached_lines.len());
     let mut y = inner.y;
+    let content_x = inner.x + PAD_X;
+    let content_width = wrap_width as u16;
 
     for line in &state.cached_lines[start..end] {
-        render_line(buf, inner.x, y, content_width, line);
+        render_line(buf, content_x, y, content_width, line);
         y += 1;
     }
 
     // Render scrollbar if needed
-    let scrollbar_area = if total_lines > visible_height {
+    let scrollbar_area = if state.total_lines > visible_height {
         let scrollbar_rect = Rect::new(inner.x + inner.width - 1, inner.y, 1, inner.height);
         render_scrollbar(
             buf,
             scrollbar_rect,
             state.scroll_offset,
-            total_lines,
+            state.total_lines,
             visible_height,
             theme.accent_color,
             theme.scrollbar_bg_color,
@@ -338,7 +391,8 @@ fn render_line(buf: &mut Buffer, x: u16, y: u16, width: u16, line: &Line) {
 fn hash_plan(plan: &PlanFile) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
-    // Hash phase count and each phase's content
+    // Hash title and phase count and each phase's content
+    plan.title.hash(&mut hasher);
     plan.phases.len().hash(&mut hasher);
     for phase in &plan.phases {
         phase.number.hash(&mut hasher);
@@ -352,43 +406,71 @@ fn hash_plan(plan: &PlanFile) -> u64 {
     hasher.finish()
 }
 
-/// Truncate a string to fit within max_width display columns, adding ellipsis if needed
-/// Uses Cow to avoid allocation when no truncation is needed
-fn truncate_str(s: &str, max_width: usize) -> Cow<'_, str> {
-    let current_width = s.width();
-    if current_width <= max_width {
-        return Cow::Borrowed(s);
+/// Word-wrap text to fit within max_width display columns
+/// Returns a vector of wrapped lines
+fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![String::new()];
     }
 
-    if max_width <= 1 {
-        // Not enough space for ellipsis, just take what fits
-        let mut result = String::new();
-        let mut width = 0;
-        for c in s.chars() {
-            let cw = c.width().unwrap_or(1);
-            if width + cw > max_width {
-                break;
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    let mut current_width = 0usize;
+
+    for word in s.split_whitespace() {
+        let word_width = word.width();
+
+        if word_width > max_width {
+            // Word is longer than max_width, need to hard-break it
+            if !current_line.is_empty() {
+                lines.push(std::mem::take(&mut current_line));
             }
-            result.push(c);
-            width += cw;
+
+            // Break the long word character by character
+            let mut word_part = String::new();
+            let mut part_width = 0usize;
+
+            for c in word.chars() {
+                let char_width = c.width().unwrap_or(1);
+                if part_width + char_width > max_width {
+                    if !word_part.is_empty() {
+                        lines.push(std::mem::take(&mut word_part));
+                    }
+                    part_width = 0;
+                }
+                word_part.push(c);
+                part_width += char_width;
+            }
+
+            // Remaining part becomes current line
+            current_line = word_part;
+            current_width = part_width;
+        } else if current_width == 0 {
+            // First word on line
+            current_line = word.to_string();
+            current_width = word_width;
+        } else if current_width + 1 + word_width <= max_width {
+            // Word fits on current line with space
+            current_line.push(' ');
+            current_line.push_str(word);
+            current_width += 1 + word_width;
+        } else {
+            // Word doesn't fit, start new line
+            lines.push(std::mem::take(&mut current_line));
+            current_line = word.to_string();
+            current_width = word_width;
         }
-        return Cow::Owned(result);
     }
 
-    // Reserve 1 column for ellipsis (…)
-    let target_width = max_width - 1;
-    let mut result = String::new();
-    let mut width = 0;
-
-    for c in s.chars() {
-        let cw = c.width().unwrap_or(1);
-        if width + cw > target_width {
-            break;
-        }
-        result.push(c);
-        width += cw;
+    // Don't forget the last line
+    if !current_line.is_empty() {
+        lines.push(current_line);
     }
 
-    result.push('…');
-    Cow::Owned(result)
+    // Ensure at least one line (for empty strings)
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
 }

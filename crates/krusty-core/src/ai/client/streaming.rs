@@ -864,6 +864,9 @@ impl AiClient {
         // Generate a cache key UUID
         let cache_key = uuid::Uuid::new_v4().to_string();
 
+        // Determine if thinking/reasoning is enabled
+        let thinking_enabled = options.thinking.is_some();
+
         // Build Codex request body - exact format from reverse-engineering
         let mut body = serde_json::json!({
             "model": self.config().model,
@@ -872,14 +875,24 @@ impl AiClient {
             "tools": [],
             "tool_choice": "auto",
             "parallel_tool_calls": false,
-            "reasoning": {
-                "summary": "auto"
-            },
             "store": false,
             "stream": true,
-            "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": cache_key
         });
+
+        // Add reasoning config based on thinking toggle
+        // When enabled: use maximum reasoning (xhigh) with auto summary
+        // When disabled: no reasoning
+        if thinking_enabled {
+            body["reasoning"] = serde_json::json!({
+                "effort": "xhigh",
+                "summary": "auto"
+            });
+            body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
+            debug!("ChatGPT Codex: reasoning enabled (effort=xhigh, summary=auto)");
+        } else {
+            debug!("ChatGPT Codex: reasoning disabled");
+        }
 
         // Add tools if provided
         if let Some(tools) = &options.tools {

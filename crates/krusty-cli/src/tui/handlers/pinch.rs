@@ -193,7 +193,9 @@ impl App {
 
     /// Get ranked files for summarization context
     fn get_ranked_files_for_summarization(&self) -> Vec<RankedFile> {
-        if let (Some(sm), Some(session_id)) = (&self.session_manager, &self.current_session_id) {
+        if let (Some(sm), Some(session_id)) =
+            (&self.services.session_manager, &self.current_session_id)
+        {
             let tracker = FileActivityTracker::new(sm.db(), session_id.clone());
             return tracker.get_ranked_files(20).unwrap_or_default();
         }
@@ -268,7 +270,7 @@ impl App {
         );
 
         // Create linked session
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             self.popups
                 .pinch
                 .set_error("No session manager".to_string());

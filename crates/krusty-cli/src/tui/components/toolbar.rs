@@ -54,18 +54,10 @@ fn get_spinner_frame() -> &'static str {
 
 /// Plan info for toolbar display
 pub struct PlanInfo<'a> {
+    #[allow(dead_code)]
     pub title: &'a str,
     pub completed: usize,
     pub total: usize,
-}
-
-/// Truncate a title to fit in the toolbar
-fn truncate_title(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
-    }
 }
 
 /// Render the toolbar at the top of the screen
@@ -145,10 +137,10 @@ pub fn render_toolbar(
         None
     };
 
-    // Right side: mode badge with optional plan info
-    // Show plan progress in both Plan and Build modes when a plan is active
+    // Right side: mode badge with optional plan progress
+    // Plan title is shown in the sidebar header, not here
     let right_spans = if let Some(ref info) = plan_info {
-        // Show: MODE 3/7 ▸ Title
+        // Show: MODE 3/7 (progress only, title in sidebar)
         let progress = format!(" {} {}/{} ", mode_label.trim(), info.completed, info.total);
         vec![
             Span::styled(
@@ -158,10 +150,7 @@ pub fn render_toolbar(
                     .fg(theme.bg_color)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!(" ▸ {} ", truncate_title(info.title, 15)),
-                Style::default().fg(theme.dim_color),
-            ),
+            Span::raw(" "),
         ]
     } else {
         // No active plan - just show mode

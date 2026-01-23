@@ -17,7 +17,7 @@ use crate::tui::utils::TitleUpdate;
 impl App {
     /// Create a new session
     pub fn create_session(&mut self, first_message: &str) -> Option<String> {
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             return None;
         };
 
@@ -94,7 +94,7 @@ impl App {
                 }
 
                 // Persist to database
-                if let Some(sm) = &self.session_manager {
+                if let Some(sm) = &self.services.session_manager {
                     if let Err(e) = sm.update_session_title(&update.session_id, &update.title) {
                         tracing::warn!("Failed to update session title: {}", e);
                     }
@@ -112,7 +112,7 @@ impl App {
 
     /// Save current token count to session
     pub fn save_session_token_count(&self) {
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             return;
         };
         let Some(session_id) = &self.current_session_id else {
@@ -125,7 +125,7 @@ impl App {
     /// Save a message to the current session
     /// Content is serialized as JSON for full fidelity (supports tools, images, etc.)
     pub fn save_model_message(&self, message: &ModelMessage) {
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             tracing::warn!("Cannot save message: no session manager");
             return;
         };
@@ -169,6 +169,7 @@ impl App {
         // Load all data from database upfront to avoid borrow conflicts
         let (messages, session_info, ui_states) = {
             let sm = self
+                .services
                 .session_manager
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("No session manager"))?;
@@ -196,7 +197,7 @@ impl App {
         self.current_session_id = Some(session_id.to_string());
 
         // Load plan for this session (strict 1:1 linkage, no working_dir fallback)
-        match self.plan_manager.get_plan(session_id) {
+        match self.services.plan_manager.get_plan(session_id) {
             Ok(Some(plan)) => {
                 let (completed, total) = plan.progress();
                 tracing::info!(
@@ -330,7 +331,8 @@ impl App {
 
     /// Get sessions for a specific directory
     pub fn list_sessions_for_directory(&self, dir: &str) -> Vec<crate::storage::SessionInfo> {
-        self.session_manager
+        self.services
+            .session_manager
             .as_ref()
             .and_then(|sm| sm.list_sessions(Some(dir)).ok())
             .unwrap_or_default()
@@ -338,7 +340,7 @@ impl App {
 
     /// Save all block UI states to the database
     pub fn save_block_ui_states(&self) {
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             return;
         };
         let Some(session_id) = &self.current_session_id else {
@@ -354,7 +356,7 @@ impl App {
 
     /// Delete a session by ID
     pub fn delete_session(&mut self, session_id: &str) {
-        let Some(sm) = &self.session_manager else {
+        let Some(sm) = &self.services.session_manager else {
             return;
         };
 

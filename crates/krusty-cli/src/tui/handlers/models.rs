@@ -14,7 +14,7 @@ impl App {
         }
 
         // Get OpenRouter API key
-        let api_key = match self.credential_store.get(&ProviderId::OpenRouter) {
+        let api_key = match self.services.credential_store.get(&ProviderId::OpenRouter) {
             Some(key) => key.clone(),
             None => {
                 tracing::warn!("Cannot fetch OpenRouter models: no API key configured");
@@ -29,7 +29,7 @@ impl App {
         self.channels.openrouter_models = Some(rx);
 
         // Clone registry for async task
-        let registry = self.model_registry.clone();
+        let registry = self.services.model_registry.clone();
 
         tokio::spawn(async move {
             let result = crate::ai::openrouter::fetch_models(&api_key).await;
@@ -59,7 +59,7 @@ impl App {
         }
 
         // Get OpenCode Zen API key
-        let api_key = match self.credential_store.get(&ProviderId::OpenCodeZen) {
+        let api_key = match self.services.credential_store.get(&ProviderId::OpenCodeZen) {
             Some(key) => key.clone(),
             None => {
                 tracing::warn!("Cannot fetch OpenCode Zen models: no API key configured");
@@ -74,7 +74,7 @@ impl App {
         self.channels.opencodezen_models = Some(rx);
 
         // Clone registry for async task
-        let registry = self.model_registry.clone();
+        let registry = self.services.model_registry.clone();
 
         tokio::spawn(async move {
             let result = crate::ai::opencodezen::fetch_models(&api_key).await;
@@ -104,7 +104,7 @@ impl App {
                     match result {
                         Ok(models) => {
                             // Cache models to preferences
-                            if let Some(ref prefs) = self.preferences {
+                            if let Some(ref prefs) = self.services.preferences {
                                 if let Err(e) = prefs.cache_openrouter_models(&models) {
                                     tracing::warn!("Failed to cache OpenRouter models: {}", e);
                                 }
@@ -141,7 +141,7 @@ impl App {
                     match result {
                         Ok(models) => {
                             // Cache models to preferences
-                            if let Some(ref prefs) = self.preferences {
+                            if let Some(ref prefs) = self.services.preferences {
                                 if let Err(e) = prefs.cache_opencodezen_models(&models) {
                                     tracing::warn!("Failed to cache OpenCode Zen models: {}", e);
                                 }
@@ -175,8 +175,10 @@ impl App {
         let configured = self.configured_providers();
 
         // Get organized models from registry (non-blocking)
-        if let Some((recent_models, models_by_provider)) =
-            self.model_registry.try_get_organized_models(&configured)
+        if let Some((recent_models, models_by_provider)) = self
+            .services
+            .model_registry
+            .try_get_organized_models(&configured)
         {
             // Convert HashMap to Vec sorted by provider display order
             let models_vec: Vec<_> = ProviderId::all()

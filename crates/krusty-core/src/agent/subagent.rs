@@ -170,6 +170,8 @@ pub struct SubAgentTask {
     pub working_dir: PathBuf,
     /// Plan task ID this agent completes (for auto-marking)
     pub plan_task_id: Option<String>,
+    /// Whether thinking/reasoning is enabled for this agent
+    pub thinking_enabled: bool,
 }
 
 impl SubAgentTask {
@@ -183,6 +185,7 @@ impl SubAgentTask {
             model: SubAgentModel::Haiku,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             plan_task_id: None,
+            thinking_enabled: false, // Default off for sub-agents
         }
     }
 
@@ -203,6 +206,11 @@ impl SubAgentTask {
 
     pub fn with_plan_task_id(mut self, task_id: impl Into<String>) -> Self {
         self.plan_task_id = Some(task_id.into());
+        self
+    }
+
+    pub fn with_thinking(mut self, enabled: bool) -> Self {
+        self.thinking_enabled = enabled;
         self
     }
 
@@ -1262,6 +1270,7 @@ async fn execute_agent_loop<C: AgentConfig>(
             &messages,
             &ai_tools,
             config.max_tokens(),
+            task.thinking_enabled,
         )
         .await
         {
@@ -1435,6 +1444,7 @@ async fn call_subagent_api(
     messages: &[ModelMessage],
     tools: &[AiTool],
     max_tokens: usize,
+    thinking_enabled: bool,
 ) -> Result<Value, SubAgentApiError> {
     info!(
         model = model,
@@ -1503,6 +1513,7 @@ async fn call_subagent_api(
                 messages_json.clone(),
                 tools_json.clone(),
                 max_tokens,
+                thinking_enabled,
             )
             .await
             .map_err(SubAgentApiError::from)

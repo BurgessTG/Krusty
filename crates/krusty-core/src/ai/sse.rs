@@ -273,15 +273,23 @@ impl SseStreamProcessor {
                         signature,
                     });
                 }
-                SseEvent::Finish { reason } => {
+                SseEvent::Finish { reason, usage } => {
                     info!(
                         "SSE Finish: reason={:?} at {:?} ({} events, {} bytes)",
                         reason, elapsed, self.event_count, self.bytes_received
                     );
                     self.stream_buffer.flush().await;
+                    // Send usage before finish if present
+                    if let Some(usage) = usage {
+                        info!(
+                            "SSE Usage (from finish): prompt={}, completion={}, total={}",
+                            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                        );
+                        let _ = self.tx.send(StreamPart::Usage { usage });
+                    }
                     let _ = self.tx.send(StreamPart::Finish { reason });
                 }
-                SseEvent::FinishWithToolCalls { tool_calls } => {
+                SseEvent::FinishWithToolCalls { tool_calls, usage } => {
                     info!(
                         "SSE FinishWithToolCalls: {} tool calls at {:?} ({} events, {} bytes)",
                         tool_calls.len(),
@@ -297,6 +305,14 @@ impl SseStreamProcessor {
                             tool_call.id, tool_call.name
                         );
                         let _ = self.tx.send(StreamPart::ToolCallComplete { tool_call });
+                    }
+                    // Send usage before finish if present
+                    if let Some(usage) = usage {
+                        info!(
+                            "SSE Usage (from finish): prompt={}, completion={}, total={}",
+                            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                        );
+                        let _ = self.tx.send(StreamPart::Usage { usage });
                     }
                     // Then send the finish signal
                     let _ = self.tx.send(StreamPart::Finish {
@@ -405,11 +421,15 @@ pub enum SseEvent {
     },
     Finish {
         reason: FinishReason,
+        /// Usage info from the API (if provided in finish event)
+        usage: Option<Usage>,
     },
     /// Finish with accumulated tool calls (OpenAI format)
     /// Used when finish_reason is "tool_calls" and we have accumulated tool call data
     FinishWithToolCalls {
         tool_calls: Vec<AiToolCall>,
+        /// Usage info from the API (if provided in finish event)
+        usage: Option<Usage>,
     },
     Usage(Usage),
     ContextEdited(ContextEditingMetrics),

@@ -389,7 +389,7 @@ impl App {
         };
 
         // Use cached tools
-        let tools = self.cached_ai_tools.clone();
+        let tools = self.services.cached_ai_tools.clone();
         let tool_names: Vec<_> = tools.iter().map(|t| t.name.as_str()).collect();
         tracing::info!("Sending {} tools to API: {:?}", tools.len(), tool_names);
 
@@ -592,7 +592,7 @@ impl App {
 
             // Save the plan if any tasks were completed
             if !completed_ids.is_empty() {
-                if let Err(e) = self.plan_manager.save_plan(plan) {
+                if let Err(e) = self.services.plan_manager.save_plan(plan) {
                     tracing::error!("Failed to save plan after task completion: {}", e);
                 }
             }
@@ -1007,10 +1007,10 @@ impl App {
         }
 
         // Clone what we need for the spawned task
-        let tool_registry = self.tool_registry.clone();
-        let lsp_manager = self.lsp_manager.clone();
+        let tool_registry = self.services.tool_registry.clone();
+        let lsp_manager = self.services.lsp_manager.clone();
         let process_registry = self.process_registry.clone();
-        let skills_manager = self.skills_manager.clone();
+        let skills_manager = self.services.skills_manager.clone();
         let cancel_token = self.cancellation.child_token();
         let plan_mode = self.work_mode == crate::tui::app::WorkMode::Plan;
         let current_model = self.current_model.clone();
@@ -1296,7 +1296,7 @@ impl App {
 
     /// Build diagnostics context for AI from LSP
     pub fn build_diagnostics_context(&self) -> String {
-        let cache = self.lsp_manager.diagnostics_cache();
+        let cache = self.services.lsp_manager.diagnostics_cache();
         let error_count = cache.error_count();
         let warning_count = cache.warning_count();
 
@@ -1427,7 +1427,7 @@ Workflow: Do the work → Call task_complete → Continue."#,
     /// AI can invoke the skill tool to load full content when needed.
     pub fn build_skills_context(&self) -> String {
         // Get skill infos - needs write lock as list_skills may refresh cache
-        let mut skills_guard = match self.skills_manager.try_write() {
+        let mut skills_guard = match self.services.skills_manager.try_write() {
             Ok(guard) => guard,
             Err(_) => {
                 tracing::debug!("Skills manager locked, skipping skills context");

@@ -95,11 +95,11 @@ impl App {
                                     self.current_model = model_id.clone();
 
                                     // Mark model as recently used
-                                    let registry = self.model_registry.clone();
+                                    let registry = self.services.model_registry.clone();
                                     futures::executor::block_on(registry.mark_recent(&model_id));
 
                                     // Save to preferences (current model + recent list)
-                                    if let Some(ref prefs) = self.preferences {
+                                    if let Some(ref prefs) = self.services.preferences {
                                         if let Err(e) = prefs.set_current_model(&model_id) {
                                             tracing::warn!("Failed to save current model: {}", e);
                                         }
@@ -203,9 +203,9 @@ impl App {
                     }
 
                     let name = server.name.clone();
-                    let mcp = self.mcp_manager.clone();
-                    let registry = self.tool_registry.clone();
-                    let status_tx = self.mcp_status_tx.clone();
+                    let mcp = self.services.mcp_manager.clone();
+                    let registry = self.services.tool_registry.clone();
+                    let status_tx = self.services.mcp_status_tx.clone();
 
                     self.popups
                         .mcp
@@ -248,8 +248,8 @@ impl App {
                     }
 
                     let name = server.name.clone();
-                    let mcp = self.mcp_manager.clone();
-                    let status_tx = self.mcp_status_tx.clone();
+                    let mcp = self.services.mcp_manager.clone();
+                    let status_tx = self.services.mcp_status_tx.clone();
 
                     tokio::spawn(async move {
                         mcp.disconnect(&name).await;
@@ -465,7 +465,7 @@ impl App {
             openai_oauth_config, AuthMethod, BrowserOAuthFlow, DeviceCodeFlow,
         };
 
-        let status_tx = self.oauth_status_tx.clone();
+        let status_tx = self.services.oauth_status_tx.clone();
 
         match method {
             AuthMethod::OAuthBrowser => {
@@ -750,7 +750,7 @@ impl App {
                     .get_info()
                     .map(|i| i.extension.clone())
                 {
-                    self.lsp_skip_list.insert(ext);
+                    self.services.lsp_skip_list.insert(ext);
                 }
                 self.popups.lsp_install.clear();
                 self.popup = Popup::None;
@@ -763,7 +763,7 @@ impl App {
                     .get_info()
                     .map(|i| i.extension.clone())
                 {
-                    self.lsp_skip_list.insert(ext);
+                    self.services.lsp_skip_list.insert(ext);
                 }
                 self.popups.lsp_install.clear();
                 self.popup = Popup::None;
@@ -827,7 +827,12 @@ impl App {
                         if let Ok(db) = Database::new(&paths::config_dir().join("krusty.db")) {
                             let id = id.to_string();
                             futures::executor::block_on(async {
-                                let _ = self.user_hook_manager.write().await.toggle(&db, &id);
+                                let _ = self
+                                    .services
+                                    .user_hook_manager
+                                    .write()
+                                    .await
+                                    .toggle(&db, &id);
                             });
                             self.refresh_hooks_popup();
                         }
@@ -838,7 +843,12 @@ impl App {
                         if let Ok(db) = Database::new(&paths::config_dir().join("krusty.db")) {
                             let id = id.to_string();
                             futures::executor::block_on(async {
-                                let _ = self.user_hook_manager.write().await.delete(&db, &id);
+                                let _ = self
+                                    .services
+                                    .user_hook_manager
+                                    .write()
+                                    .await
+                                    .delete(&db, &id);
                             });
                             self.refresh_hooks_popup();
                         }
@@ -873,7 +883,12 @@ impl App {
                     if let Some(hook) = self.popups.hooks.get_pending_hook() {
                         if let Ok(db) = Database::new(&paths::config_dir().join("krusty.db")) {
                             futures::executor::block_on(async {
-                                let _ = self.user_hook_manager.write().await.save(&db, hook);
+                                let _ = self
+                                    .services
+                                    .user_hook_manager
+                                    .write()
+                                    .await
+                                    .save(&db, hook);
                             });
                             self.refresh_hooks_popup();
                             self.popups.hooks.reset();
@@ -888,7 +903,12 @@ impl App {
     /// Refresh hooks popup with current hooks from database
     fn refresh_hooks_popup(&mut self) {
         let hooks = futures::executor::block_on(async {
-            self.user_hook_manager.read().await.hooks().to_vec()
+            self.services
+                .user_hook_manager
+                .read()
+                .await
+                .hooks()
+                .to_vec()
         });
         self.popups.hooks.set_hooks(hooks);
     }

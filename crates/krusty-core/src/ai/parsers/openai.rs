@@ -34,8 +34,35 @@ impl OpenAIParser {
                 }
             }
 
-            // Response completed - check for accumulated tool calls
+            // Response completed - check for accumulated tool calls and extract usage
             "response.done" | "response.completed" => {
+                // Extract usage from the response field (Codex API format)
+                // Structure: {"type": "response.done", "response": {"id": "...", "usage": {...}}}
+                let usage = json.get("response").and_then(|r| r.get("usage")).map(|u| {
+                    let input =
+                        u.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0) as usize;
+                    let output =
+                        u.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0) as usize;
+                    let cached = u
+                        .get("input_tokens_details")
+                        .and_then(|d| d.get("cached_tokens"))
+                        .and_then(|t| t.as_u64())
+                        .unwrap_or(0) as usize;
+                    tracing::info!(
+                        "Responses API usage: input={}, output={}, cached={}",
+                        input,
+                        output,
+                        cached
+                    );
+                    Usage {
+                        prompt_tokens: input,
+                        completion_tokens: output,
+                        total_tokens: input + output,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: cached,
+                    }
+                });
+
                 let mut accumulators = self.tool_accumulators.lock().unwrap();
                 if !accumulators.is_empty() {
                     // Complete all accumulated tool calls
@@ -47,10 +74,11 @@ impl OpenAIParser {
                         "Responses API completing with {} tool calls",
                         tool_calls.len()
                     );
-                    return SseEvent::FinishWithToolCalls { tool_calls };
+                    return SseEvent::FinishWithToolCalls { tool_calls, usage };
                 }
                 return SseEvent::Finish {
                     reason: FinishReason::Stop,
+                    usage,
                 };
             }
 
@@ -221,6 +249,7 @@ impl SseParser for OpenAIParser {
                     if reason == "stop" || reason == "end_turn" {
                         return Ok(SseEvent::Finish {
                             reason: FinishReason::Stop,
+                            usage: None,
                         });
                     }
                     if reason == "tool_calls" {
@@ -234,9 +263,13 @@ impl SseParser for OpenAIParser {
                         if tool_calls.is_empty() {
                             return Ok(SseEvent::Finish {
                                 reason: FinishReason::ToolCalls,
+                                usage: None,
                             });
                         }
-                        return Ok(SseEvent::FinishWithToolCalls { tool_calls });
+                        return Ok(SseEvent::FinishWithToolCalls {
+                            tool_calls,
+                            usage: None,
+                        });
                     }
                 }
 

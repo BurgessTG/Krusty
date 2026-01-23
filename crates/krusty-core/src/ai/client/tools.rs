@@ -25,11 +25,19 @@ impl AiClient {
         messages: Vec<Value>,
         tools: Vec<Value>,
         max_tokens: usize,
+        thinking_enabled: bool,
     ) -> Result<Value> {
         // Route to appropriate format handler based on API format
         if self.config().uses_openai_format() {
             return self
-                .call_with_tools_openai(model, system_prompt, messages, tools, max_tokens)
+                .call_with_tools_openai(
+                    model,
+                    system_prompt,
+                    messages,
+                    tools,
+                    max_tokens,
+                    thinking_enabled,
+                )
                 .await;
         }
 
@@ -40,8 +48,15 @@ impl AiClient {
         }
 
         // Anthropic format (default)
-        self.call_with_tools_anthropic(model, system_prompt, messages, tools, max_tokens)
-            .await
+        self.call_with_tools_anthropic(
+            model,
+            system_prompt,
+            messages,
+            tools,
+            max_tokens,
+            thinking_enabled,
+        )
+        .await
     }
 
     /// Call with tools using Anthropic format
@@ -52,14 +67,23 @@ impl AiClient {
         messages: Vec<Value>,
         tools: Vec<Value>,
         max_tokens: usize,
+        thinking_enabled: bool,
     ) -> Result<Value> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
             "system": system_prompt,
             "tools": tools
         });
+
+        // Add thinking configuration when enabled
+        if thinking_enabled {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": 32000  // Maximum budget for sub-agents
+            });
+        }
 
         // Add thinking beta for providers that support it
         let beta_headers = vec!["interleaved-thinking-2025-05-14"];
@@ -102,6 +126,7 @@ impl AiClient {
         messages: Vec<Value>,
         tools: Vec<Value>,
         max_tokens: usize,
+        thinking_enabled: bool,
     ) -> Result<Value> {
         // Check if we're using ChatGPT Codex API (OAuth)
         let is_chatgpt_codex = self
@@ -113,7 +138,13 @@ impl AiClient {
 
         if is_chatgpt_codex {
             return self
-                .call_with_tools_chatgpt_codex(model, system_prompt, messages, tools)
+                .call_with_tools_chatgpt_codex(
+                    model,
+                    system_prompt,
+                    messages,
+                    tools,
+                    thinking_enabled,
+                )
                 .await;
         }
 
@@ -250,6 +281,11 @@ impl AiClient {
             body["tools"] = serde_json::json!(openai_tools);
         }
 
+        // Add reasoning effort when thinking is enabled (high = maximum for OpenAI API)
+        if thinking_enabled {
+            body["reasoning_effort"] = serde_json::json!("high");
+        }
+
         let request = self.build_request(&self.config().api_url());
         let response = match request.json(&body).send().await {
             Ok(r) => r,
@@ -292,6 +328,7 @@ impl AiClient {
         system_prompt: &str,
         messages: Vec<Value>,
         tools: Vec<Value>,
+        thinking_enabled: bool,
     ) -> Result<Value> {
         info!(model = model, provider = %self.provider_id(), "Sub-agent ChatGPT Codex API call starting (streaming)");
         let start = Instant::now();
@@ -433,14 +470,19 @@ impl AiClient {
             "tools": codex_tools,
             "tool_choice": "auto",
             "parallel_tool_calls": false,
-            "reasoning": {
-                "summary": "auto"
-            },
             "store": false,
             "stream": true,  // Codex API REQUIRES streaming
-            "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": cache_key
         });
+
+        // Add reasoning when thinking is enabled (xhigh effort for maximum reasoning)
+        if thinking_enabled {
+            body["reasoning"] = serde_json::json!({
+                "effort": "xhigh",
+                "summary": "auto"
+            });
+            body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
+        }
 
         // Remove tools if empty
         if codex_tools.is_empty() {

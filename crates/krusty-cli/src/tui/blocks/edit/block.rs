@@ -98,18 +98,57 @@ impl EditBlock {
     }
 
     /// Pre-compute side-by-side pairing (indices into diff_lines)
+    /// Groups consecutive removed/added lines together on the same row
     fn compute_sbs_pairs(&mut self) {
-        self.sbs_pairs = self
-            .diff_lines
-            .iter()
-            .enumerate()
-            .map(|(i, line)| match line {
-                DiffLine::Context { .. } => (Some(i), Some(i)),
-                DiffLine::Removed { .. } => (Some(i), None),
-                DiffLine::Added { .. } => (None, Some(i)),
-            })
-            .filter(|(l, r)| l.is_some() || r.is_some())
-            .collect();
+        self.sbs_pairs.clear();
+
+        let mut i = 0;
+        while i < self.diff_lines.len() {
+            match &self.diff_lines[i] {
+                DiffLine::Context { .. } => {
+                    // Context lines appear on both sides
+                    self.sbs_pairs.push((Some(i), Some(i)));
+                    i += 1;
+                }
+                DiffLine::Removed { .. } => {
+                    // Collect consecutive removed lines
+                    let mut removed_indices = vec![i];
+                    i += 1;
+                    while i < self.diff_lines.len() {
+                        if matches!(&self.diff_lines[i], DiffLine::Removed { .. }) {
+                            removed_indices.push(i);
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Collect consecutive added lines that follow
+                    let mut added_indices = Vec::new();
+                    while i < self.diff_lines.len() {
+                        if matches!(&self.diff_lines[i], DiffLine::Added { .. }) {
+                            added_indices.push(i);
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Pair up removed and added lines on the same row
+                    let max_len = removed_indices.len().max(added_indices.len());
+                    for j in 0..max_len {
+                        let left = removed_indices.get(j).copied();
+                        let right = added_indices.get(j).copied();
+                        self.sbs_pairs.push((left, right));
+                    }
+                }
+                DiffLine::Added { .. } => {
+                    // Added lines without preceding removed lines
+                    self.sbs_pairs.push((None, Some(i)));
+                    i += 1;
+                }
+            }
+        }
     }
 
     /// Mark the edit as complete (stops animation and expands)
@@ -167,50 +206,60 @@ impl EditBlock {
 
         let mut old_idx = 0;
         let mut new_idx = 0;
-        let mut line_num = self.start_line;
+        // Track line numbers separately for old and new files
+        let mut old_line_num = self.start_line;
+        let mut new_line_num = self.start_line;
 
         for (oi, ni) in lcs {
+            // Removed lines from old file (before this LCS match)
             while old_idx < oi {
                 self.diff_lines.push(DiffLine::Removed {
-                    line_num,
+                    line_num: old_line_num,
                     content: old_lines[old_idx].to_string(),
                 });
                 old_idx += 1;
-                line_num += 1;
+                old_line_num += 1;
             }
 
+            // Added lines from new file (before this LCS match)
             while new_idx < ni {
                 self.diff_lines.push(DiffLine::Added {
-                    line_num,
+                    line_num: new_line_num,
                     content: new_lines[new_idx].to_string(),
                 });
                 new_idx += 1;
+                new_line_num += 1;
             }
 
+            // Context line (matching line in both files)
             self.diff_lines.push(DiffLine::Context {
-                line_num,
+                line_num: old_line_num,
                 content: old_lines[oi].to_string(),
             });
             old_idx = oi + 1;
             new_idx = ni + 1;
-            line_num += 1;
+            old_line_num += 1;
+            new_line_num += 1;
         }
 
+        // Remaining removed lines from old file
         while old_idx < old_lines.len() {
             self.diff_lines.push(DiffLine::Removed {
-                line_num,
+                line_num: old_line_num,
                 content: old_lines[old_idx].to_string(),
             });
             old_idx += 1;
-            line_num += 1;
+            old_line_num += 1;
         }
 
+        // Remaining added lines from new file
         while new_idx < new_lines.len() {
             self.diff_lines.push(DiffLine::Added {
-                line_num,
+                line_num: new_line_num,
                 content: new_lines[new_idx].to_string(),
             });
             new_idx += 1;
+            new_line_num += 1;
         }
 
         self.filter_with_context();

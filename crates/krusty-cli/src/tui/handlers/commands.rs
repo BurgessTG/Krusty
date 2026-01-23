@@ -44,8 +44,10 @@ impl App {
                 let configured = self.configured_providers();
 
                 // Get organized models from registry without blocking
-                if let Some((recent_models, models_by_provider)) =
-                    self.model_registry.try_get_organized_models(&configured)
+                if let Some((recent_models, models_by_provider)) = self
+                    .services
+                    .model_registry
+                    .try_get_organized_models(&configured)
                 {
                     // Convert HashMap to Vec sorted by provider display order
                     let models_vec: Vec<_> = crate::ai::providers::ProviderId::all()
@@ -65,6 +67,7 @@ impl App {
                 // If OpenRouter is configured but has no models, trigger fetch
                 if configured.contains(&crate::ai::providers::ProviderId::OpenRouter) {
                     if let Some(false) = self
+                        .services
                         .model_registry
                         .try_has_models(crate::ai::providers::ProviderId::OpenRouter)
                     {
@@ -75,6 +78,7 @@ impl App {
                 // If OpenCode Zen is configured but has no models, trigger fetch
                 if configured.contains(&crate::ai::providers::ProviderId::OpenCodeZen) {
                     if let Some(false) = self
+                        .services
                         .model_registry
                         .try_has_models(crate::ai::providers::ProviderId::OpenCodeZen)
                     {
@@ -444,7 +448,9 @@ impl App {
     /// Get top N files by activity for preview
     fn get_top_files_preview(&self, n: usize) -> Vec<(String, f64)> {
         // Get file activity from database if we have a session
-        if let (Some(sm), Some(session_id)) = (&self.session_manager, &self.current_session_id) {
+        if let (Some(sm), Some(session_id)) =
+            (&self.services.session_manager, &self.current_session_id)
+        {
             use crate::storage::FileActivityTracker;
             let db = sm.db();
             let tracker = FileActivityTracker::new(db, session_id.clone());
@@ -508,7 +514,7 @@ impl App {
                 if let Some(ref mut plan) = self.active_plan {
                     // Mark as abandoned and save
                     plan.status = PlanStatus::Abandoned;
-                    if let Err(e) = self.plan_manager.save_plan(plan) {
+                    if let Err(e) = self.services.plan_manager.save_plan(plan) {
                         tracing::warn!("Failed to save abandoned plan: {}", e);
                     }
                     let title = plan.title.clone();
@@ -533,7 +539,11 @@ impl App {
             Some("list") | Some("history") => {
                 // Show completed plans for this working directory
                 let working_dir_str = self.working_dir.to_string_lossy().into_owned();
-                match self.plan_manager.list_completed_for_dir(&working_dir_str) {
+                match self
+                    .services
+                    .plan_manager
+                    .list_completed_for_dir(&working_dir_str)
+                {
                     Ok(plans) if plans.is_empty() => {
                         self.messages.push((
                             "system".to_string(),
@@ -600,7 +610,7 @@ impl App {
     /// Open skills browser popup
     fn open_skills_browser(&mut self) {
         // Load skills and populate popup
-        let skills = match self.skills_manager.try_write() {
+        let skills = match self.services.skills_manager.try_write() {
             Ok(mut guard) => guard.list_skills(),
             Err(_) => {
                 self.messages.push((
@@ -617,7 +627,7 @@ impl App {
 
     /// Refresh skills in the browser
     pub fn refresh_skills_browser(&mut self) {
-        let skills = match self.skills_manager.try_write() {
+        let skills = match self.services.skills_manager.try_write() {
             Ok(mut guard) => {
                 guard.refresh();
                 guard.list_skills()
@@ -636,7 +646,7 @@ impl App {
 
     /// Refresh MCP servers in the browser popup
     pub fn refresh_mcp_popup(&mut self) {
-        let mcp = self.mcp_manager.clone();
+        let mcp = self.services.mcp_manager.clone();
         let servers = futures::executor::block_on(mcp.list_servers());
         self.popups.mcp.update(servers);
     }
@@ -644,7 +654,12 @@ impl App {
     /// Open hooks configuration popup
     fn open_hooks_popup(&mut self) {
         let hooks: Vec<_> = futures::executor::block_on(async {
-            self.user_hook_manager.read().await.hooks().to_vec()
+            self.services
+                .user_hook_manager
+                .read()
+                .await
+                .hooks()
+                .to_vec()
         });
         self.popups.hooks.set_hooks(hooks);
         self.popup = Popup::Hooks;

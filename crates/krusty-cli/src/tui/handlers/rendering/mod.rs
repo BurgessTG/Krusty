@@ -7,25 +7,30 @@ mod views;
 
 use ratatui::{style::Style, widgets::Block, Frame};
 
-use crate::tui::app::{App, Popup, View};
+use crate::tui::app::{App, Popup};
 use crate::tui::components::render_toasts;
 
 impl App {
     /// Main UI rendering dispatcher
     pub fn ui(&mut self, f: &mut Frame) {
+        // Render background
         let bg = Block::default().style(Style::default().bg(self.theme.bg_color));
         f.render_widget(bg, f.area());
 
+        // Render main view - direct match avoids borrow conflicts
         match self.view {
-            View::StartMenu => self.render_start_menu(f),
-            View::Chat => self.render_chat(f),
+            crate::tui::app::View::StartMenu => self.render_start_menu(f),
+            crate::tui::app::View::Chat => self.render_chat(f),
         }
 
-        // Render popup on top
+        // Render popup on top - use reference matching for short-lived borrows
         match &self.popup {
             Popup::None => {}
             Popup::Help => self.popups.help.render(f, &self.theme),
-            Popup::ThemeSelect => self.popups.theme.render(f, &self.theme, &self.theme_name),
+            Popup::ThemeSelect => {
+                let theme_name = self.theme_name.clone();
+                self.popups.theme.render(f, &self.theme, &theme_name)
+            }
             Popup::ModelSelect => self.popups.model.render(
                 f,
                 &self.theme,

@@ -67,6 +67,7 @@ impl SseParser for GoogleParser {
                     // Return finish event
                     return Ok(SseEvent::Finish {
                         reason: Self::parse_finish_reason(finish_reason),
+                        usage: None,
                     });
                 }
 
