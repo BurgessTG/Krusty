@@ -20,8 +20,10 @@ impl OpenAIParser {
     }
 
     /// Parse OpenAI Responses API event format
-    /// Used by GPT-5 models via OpenCode Zen
+    /// Used by GPT-5 models via OpenCode Zen and ChatGPT Codex
     fn parse_responses_api_event(&self, json: &Value, event_type: &str) -> SseEvent {
+        tracing::debug!("Responses API event: {} - {:?}", event_type, json);
+
         match event_type {
             // Text content delta
             "response.output_text.delta" => {
@@ -32,14 +34,27 @@ impl OpenAIParser {
                 }
             }
 
-            // Response completed
+            // Response completed - check for accumulated tool calls
             "response.done" | "response.completed" => {
+                let mut accumulators = self.tool_accumulators.lock().unwrap();
+                if !accumulators.is_empty() {
+                    // Complete all accumulated tool calls
+                    let tool_calls: Vec<_> = accumulators
+                        .drain()
+                        .map(|(_, mut acc)| acc.force_complete())
+                        .collect();
+                    tracing::info!(
+                        "Responses API completing with {} tool calls",
+                        tool_calls.len()
+                    );
+                    return SseEvent::FinishWithToolCalls { tool_calls };
+                }
                 return SseEvent::Finish {
                     reason: FinishReason::Stop,
                 };
             }
 
-            // Function/tool call start
+            // Function/tool call start - multiple event types for different APIs
             "response.function_call_arguments.start" | "response.output_item.added" => {
                 if let Some(item) = json.get("item") {
                     if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
@@ -54,6 +69,11 @@ impl OpenAIParser {
                             .unwrap_or("")
                             .to_string();
                         if !name.is_empty() {
+                            tracing::info!(
+                                "Responses API tool call start: id={}, name={}",
+                                id,
+                                name
+                            );
                             let mut accumulators = self.tool_accumulators.lock().unwrap();
                             let index = accumulators.len();
                             accumulators
@@ -67,8 +87,9 @@ impl OpenAIParser {
             // Function arguments delta
             "response.function_call_arguments.delta" => {
                 if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
-                    let accumulators = self.tool_accumulators.lock().unwrap();
-                    if let Some((_, acc)) = accumulators.iter().last() {
+                    let mut accumulators = self.tool_accumulators.lock().unwrap();
+                    if let Some((_, acc)) = accumulators.iter_mut().last() {
+                        acc.add_arguments(delta);
                         return SseEvent::ToolCallDelta {
                             id: acc.id.clone(),
                             delta: delta.to_string(),
@@ -77,9 +98,23 @@ impl OpenAIParser {
                 }
             }
 
-            // Function call done
+            // Function call done - arguments are complete
             "response.function_call_arguments.done" => {
-                // Tool call complete, will be handled by finish event
+                // Arguments complete, tool call will be finalized on response.done
+                if let Some(arguments) = json.get("arguments").and_then(|a| a.as_str()) {
+                    let mut accumulators = self.tool_accumulators.lock().unwrap();
+                    if let Some((_, acc)) = accumulators.iter_mut().last() {
+                        // Ensure we have the complete arguments
+                        if acc.arguments.is_empty() {
+                            acc.add_arguments(arguments);
+                        }
+                        tracing::debug!(
+                            "Tool call arguments complete: id={}, args_len={}",
+                            acc.id,
+                            acc.arguments.len()
+                        );
+                    }
+                }
             }
 
             // Usage info
@@ -106,7 +141,9 @@ impl OpenAIParser {
             }
 
             // Other events we can skip
-            _ => {}
+            _ => {
+                tracing::trace!("Skipping Responses API event: {}", event_type);
+            }
         }
 
         SseEvent::Skip
