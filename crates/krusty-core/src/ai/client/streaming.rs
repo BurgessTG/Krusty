@@ -731,19 +731,25 @@ impl AiClient {
 
     /// Build request body for ChatGPT Codex API
     ///
-    /// ChatGPT Codex has a different format than standard OpenAI APIs:
-    /// - Uses "instructions" field for system prompt (required)
-    /// - Uses "developer" role instead of "system"
-    /// - Message content is array of {"type": "input_text", "text": "..."}
+    /// ChatGPT Codex has a completely different format than standard OpenAI APIs.
+    /// Based on reverse-engineering from: https://simonwillison.net/2025/Nov/9/gpt-5-codex-mini/
+    ///
+    /// Key differences:
+    /// - Uses "instructions" field for system prompt (required, not a message)
+    /// - Messages wrapped in {"type": "message", "role": ..., "content": [...]}
+    /// - Content items use {"type": "input_text", "text": ...} for user messages
+    /// - No max_output_tokens parameter
+    /// - Requires: store=false, tool_choice, parallel_tool_calls, reasoning, include
     fn build_chatgpt_codex_body(
         &self,
         messages: &[ModelMessage],
         system_prompt: &Option<String>,
-        max_tokens: usize,
+        _max_tokens: usize, // Not used - Codex doesn't support this parameter
         options: &CallOptions,
         format_handler: &OpenAIFormat,
     ) -> Value {
         // Convert messages to Codex format
+        // Each message is wrapped: {"type": "message", "role": "...", "content": [...]}
         let mut input_messages: Vec<Value> = Vec::new();
 
         for msg in messages.iter().filter(|m| m.role != Role::System) {
@@ -751,7 +757,7 @@ impl AiClient {
                 Role::User => "user",
                 Role::Assistant => "assistant",
                 Role::Tool => "tool",
-                Role::System => continue, // Handled via instructions
+                Role::System => continue, // Handled via instructions field
             };
 
             // Check for tool results
@@ -772,54 +778,57 @@ impl AiClient {
                             Value::String(s) => s.clone(),
                             other => other.to_string(),
                         };
+                        // Tool results in Codex format
                         input_messages.push(serde_json::json!({
-                            "role": "tool",
-                            "tool_call_id": tool_use_id,
-                            "content": output_str
+                            "type": "function_call_output",
+                            "call_id": tool_use_id,
+                            "output": output_str
                         }));
                     }
                 }
                 continue;
             }
 
-            // Check for tool calls
+            // Check for tool calls (assistant requesting tool use)
             let has_tool_use = msg
                 .content
                 .iter()
                 .any(|c| matches!(c, Content::ToolUse { .. }));
 
             if has_tool_use && role == "assistant" {
-                let mut tool_calls = Vec::new();
-                let mut text_content = String::new();
+                // First add any text content as a message
+                let text_content: String = msg
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
+                        Content::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
+                if !text_content.is_empty() {
+                    input_messages.push(serde_json::json!({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{
+                            "type": "output_text",
+                            "text": text_content
+                        }]
+                    }));
+                }
+
+                // Then add each tool call as a function_call item
                 for content in &msg.content {
-                    match content {
-                        Content::Text { text } => text_content.push_str(text),
-                        Content::ToolUse { id, name, input } => {
-                            tool_calls.push(serde_json::json!({
-                                "id": id,
-                                "type": "function",
-                                "function": {
-                                    "name": name,
-                                    "arguments": input.to_string()
-                                }
-                            }));
-                        }
-                        _ => {}
+                    if let Content::ToolUse { id, name, input } = content {
+                        input_messages.push(serde_json::json!({
+                            "type": "function_call",
+                            "call_id": id,
+                            "name": name,
+                            "arguments": input.to_string()
+                        }));
                     }
                 }
-
-                let mut msg_obj = serde_json::json!({
-                    "role": "assistant",
-                    "tool_calls": tool_calls
-                });
-                if !text_content.is_empty() {
-                    msg_obj["content"] = serde_json::json!([{
-                        "type": "output_text",
-                        "text": text_content
-                    }]);
-                }
-                input_messages.push(msg_obj);
                 continue;
             }
 
@@ -835,48 +844,54 @@ impl AiClient {
                 .join("\n");
 
             if !text.is_empty() {
-                // Codex format: content as array of typed objects
+                // Codex format: wrapped message with typed content
+                let content_type = if role == "assistant" {
+                    "output_text"
+                } else {
+                    "input_text"
+                };
                 input_messages.push(serde_json::json!({
+                    "type": "message",
                     "role": role,
                     "content": [{
-                        "type": "input_text",
+                        "type": content_type,
                         "text": text
                     }]
                 }));
             }
         }
 
-        // Build Codex request body
+        // Generate a cache key UUID
+        let cache_key = uuid::Uuid::new_v4().to_string();
+
+        // Build Codex request body - exact format from reverse-engineering
         let mut body = serde_json::json!({
             "model": self.config().model,
-            "stream": true,
-            "store": false,  // Required by ChatGPT Codex API
-            "max_output_tokens": max_tokens,
+            "instructions": system_prompt.as_deref().unwrap_or(KRUSTY_SYSTEM_PROMPT),
             "input": input_messages,
             "tools": [],
+            "tool_choice": "auto",
+            "parallel_tool_calls": false,
             "reasoning": {
                 "summary": "auto"
-            }
+            },
+            "store": false,
+            "stream": true,
+            "include": ["reasoning.encrypted_content"],
+            "prompt_cache_key": cache_key
         });
-
-        // Instructions field is REQUIRED for Codex API
-        if let Some(instructions) = system_prompt {
-            body["instructions"] = serde_json::json!(instructions);
-        } else {
-            body["instructions"] = serde_json::json!(KRUSTY_SYSTEM_PROMPT);
-        }
 
         // Add tools if provided
         if let Some(tools) = &options.tools {
             let codex_tools = format_handler.convert_tools(tools);
             if !codex_tools.is_empty() {
                 body["tools"] = serde_json::json!(codex_tools);
-                body["tool_choice"] = serde_json::json!("auto");
             }
         }
 
         debug!(
-            "ChatGPT Codex request body: {} messages, {} tools",
+            "ChatGPT Codex request: model={}, {} messages, {} tools",
+            self.config().model,
             input_messages.len(),
             options.tools.as_ref().map(|t| t.len()).unwrap_or(0)
         );
