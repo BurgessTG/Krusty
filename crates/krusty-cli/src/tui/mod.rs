@@ -6,6 +6,7 @@ mod app_builder;
 mod auth;
 pub mod blocks;
 pub mod components;
+mod extensions;
 pub mod graphics;
 pub mod handlers;
 pub mod input;

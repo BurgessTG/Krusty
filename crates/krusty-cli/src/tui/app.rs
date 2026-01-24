@@ -30,7 +30,6 @@ use crate::ai::providers::ProviderId;
 use crate::ai::types::{AiTool, AiToolCall, Content, ModelMessage};
 use crate::extensions::WasmHost;
 use crate::lsp::LspManager;
-use crate::paths;
 use crate::plan::{PlanFile, PlanManager};
 use crate::process::ProcessRegistry;
 use crate::storage::{CredentialStore, Preferences, SessionManager};
@@ -49,8 +48,7 @@ use crate::tui::state::{
 };
 use crate::tui::streaming::StreamingManager;
 use crate::tui::themes::{Theme, THEME_REGISTRY};
-use crate::tui::utils::AppWorktreeDelegate;
-use crate::tui::utils::{count_wrapped_lines, language_to_extensions, AsyncChannels, TitleEditor};
+use crate::tui::utils::{count_wrapped_lines, AsyncChannels, TitleEditor};
 use krusty_core::skills::SkillsManager;
 
 /// View types
@@ -581,127 +579,24 @@ impl App {
 
     /// Initialize language servers from loaded WASM extensions
     pub async fn initialize_extension_servers(&self) -> Result<()> {
-        let Some(wasm_host) = &self.services.wasm_host else {
-            return Ok(());
-        };
-
-        let extensions_dir = paths::extensions_dir();
-        if !extensions_dir.exists() {
-            return Ok(());
-        }
-
-        let worktree = AppWorktreeDelegate::new(self.working_dir.clone());
-
-        let entries = match std::fs::read_dir(&extensions_dir) {
-            Ok(e) => e,
-            Err(_) => return Ok(()),
-        };
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            if let Ok(extension) = wasm_host.load_extension_from_dir(&path).await {
-                tracing::info!("Loaded extension: {}", extension.manifest.name);
-                self.register_extension_lsp_servers(&extension, wasm_host, worktree.clone())
-                    .await;
-            }
-        }
-
-        Ok(())
+        crate::tui::extensions::initialize_extension_servers(
+            self.services.wasm_host.as_ref(),
+            &self.services.lsp_manager,
+            &self.working_dir,
+        )
+        .await
     }
 
     /// Register language servers for a single extension
     /// Used after installing extensions mid-session
     pub async fn register_extension_servers(&self, extension_path: &Path) -> Result<()> {
-        let Some(wasm_host) = &self.services.wasm_host else {
-            return Ok(());
-        };
-
-        let worktree = AppWorktreeDelegate::new(self.working_dir.clone());
-        let extension = wasm_host.load_extension_from_dir(extension_path).await?;
-        tracing::info!(
-            "Registering servers for extension: {}",
-            extension.manifest.name
-        );
-        self.register_extension_lsp_servers(&extension, wasm_host, worktree)
-            .await;
-
-        Ok(())
-    }
-
-    /// Helper to register all language servers from a loaded extension
-    async fn register_extension_lsp_servers(
-        &self,
-        extension: &crate::extensions::wasm_host::WasmExtension,
-        wasm_host: &crate::extensions::wasm_host::WasmHost,
-        worktree: std::sync::Arc<AppWorktreeDelegate>,
-    ) {
-        for (server_id, entry) in &extension.manifest.language_servers {
-            match extension
-                .language_server_command(
-                    server_id.clone().into(),
-                    worktree.clone()
-                        as std::sync::Arc<dyn crate::extensions::types::WorktreeDelegate>,
-                )
-                .await
-            {
-                Ok(mut command) => {
-                    // Resolve relative command path to absolute path
-                    let extension_work_dir = wasm_host.work_dir.join(&extension.manifest.id);
-                    let command_path = std::path::Path::new(&command.command);
-                    if command_path.is_relative() {
-                        let absolute_path = extension_work_dir.join(command_path);
-                        command.command = absolute_path.to_string_lossy().into_owned();
-                    }
-
-                    // Use languages list, falling back to singular language field
-                    let langs: Vec<&str> = if entry.languages.is_empty() {
-                        entry.language.as_deref().into_iter().collect()
-                    } else {
-                        entry.languages.iter().map(|s| s.as_str()).collect()
-                    };
-
-                    let file_extensions: Vec<String> = langs
-                        .iter()
-                        .flat_map(|lang| language_to_extensions(lang))
-                        .collect();
-
-                    let full_server_id = format!("{}-{}", extension.manifest.id, server_id);
-
-                    tracing::info!(
-                        "Registering LSP {} for languages {:?} (extensions: {:?})",
-                        full_server_id,
-                        langs,
-                        file_extensions
-                    );
-
-                    if let Err(e) = self
-                        .services
-                        .lsp_manager
-                        .register_from_extension(
-                            &full_server_id,
-                            command,
-                            file_extensions,
-                            50, // Extensions get lower priority than builtins
-                        )
-                        .await
-                    {
-                        tracing::error!("Failed to register LSP {}: {}", full_server_id, e);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to get language server command for {}/{}: {}",
-                        extension.manifest.id,
-                        server_id,
-                        e
-                    );
-                }
-            }
-        }
+        crate::tui::extensions::register_extension_servers(
+            self.services.wasm_host.as_ref(),
+            &self.services.lsp_manager,
+            &self.working_dir,
+            extension_path,
+        )
+        .await
     }
 
     /// Try to load existing authentication for the active provider
