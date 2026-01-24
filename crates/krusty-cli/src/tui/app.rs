@@ -39,7 +39,8 @@ use crate::tui::animation::MenuAnimator;
 use crate::tui::input::{AutocompletePopup, MultiLineInput};
 use crate::tui::markdown::MarkdownCache;
 use crate::tui::polling::{
-    poll_bash_output, poll_build_progress, poll_explore_progress, PollResult,
+    poll_background_processes, poll_bash_output, poll_build_progress, poll_explore_progress,
+    poll_mcp_status, poll_oauth_status, PollAction, PollResult,
 };
 use crate::tui::state::PopupState;
 use crate::tui::state::{
@@ -258,8 +259,15 @@ impl App {
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         // Initialize all services via builder
-        let (services, channels, process_registry, current_model, theme, theme_name, active_provider) =
-            crate::tui::app_builder::init_services(&working_dir).await;
+        let (
+            services,
+            channels,
+            process_registry,
+            current_model,
+            theme,
+            theme_name,
+            active_provider,
+        ) = crate::tui::app_builder::init_services(&working_dir).await;
 
         Self {
             view: View::StartMenu,
@@ -1153,148 +1161,32 @@ impl App {
         }
     }
 
-    /// Poll ProcessRegistry for background process status updates
-    /// Updates BashBlocks that are tracking background processes
-    fn poll_background_processes(&mut self) {
-        // Get list of processes without blocking
-        let Some(processes) = self.process_registry.try_list() else {
-            return;
-        };
+    /// Process actions returned from polling operations
+    fn process_poll_actions(&mut self, result: PollResult) {
+        // Add messages
+        for (role, content) in result.messages {
+            self.messages.push((role, content));
+        }
 
-        // Check each background BashBlock
-        for block in self.blocks.bash.iter_mut() {
-            // Clone process_id to avoid borrow conflict with block.complete()
-            let Some(process_id) = block.background_process_id().map(|s| s.to_string()) else {
-                continue;
-            };
-
-            // Find matching process in registry
-            if let Some(info) = processes.iter().find(|p| p.id == process_id) {
-                // Check if process has completed and block is still streaming
-                if !info.is_running() && block.is_streaming() {
-                    // Process finished - update block status
-                    let exit_code = match &info.status {
-                        crate::process::ProcessStatus::Completed { exit_code, .. } => *exit_code,
-                        crate::process::ProcessStatus::Failed { .. } => 1,
-                        crate::process::ProcessStatus::Killed { .. } => 137, // SIGKILL
-                        crate::process::ProcessStatus::Running
-                        | crate::process::ProcessStatus::Suspended => continue, // Still alive
-                    };
-                    block.complete(exit_code);
+        // Execute actions
+        for action in result.actions {
+            match action {
+                PollAction::RefreshMcpPopup => {
+                    self.refresh_mcp_popup();
+                }
+                PollAction::RefreshAiTools => {
+                    self.services.cached_ai_tools =
+                        futures::executor::block_on(self.services.tool_registry.get_ai_tools());
                     tracing::info!(
-                        process_id = %process_id,
-                        exit_code = exit_code,
-                        "Background BashBlock completed from ProcessRegistry"
+                        "Refreshed AI tools after MCP update, total: {}",
+                        self.services.cached_ai_tools.len()
                     );
                 }
-            }
-        }
-    }
-
-    /// Poll MCP status updates from background connection tasks
-    fn poll_mcp_status(&mut self) {
-        if let Some(mut rx) = self.channels.mcp_status.take() {
-            loop {
-                match rx.try_recv() {
-                    Ok(update) => {
-                        // Update popup status message
-                        let status_msg = if update.success {
-                            format!("✓ {}", update.message)
-                        } else {
-                            format!("✗ {}", update.message)
-                        };
-                        self.popups.mcp.set_status(status_msg);
-
-                        // Refresh server list to show updated state
-                        self.refresh_mcp_popup();
-
-                        // Refresh cached AI tools so new MCP tools are sent to the API
-                        if update.success {
-                            self.services.cached_ai_tools = futures::executor::block_on(
-                                self.services.tool_registry.get_ai_tools(),
-                            );
-                            tracing::info!(
-                                "Refreshed AI tools after MCP update, total: {}",
-                                self.services.cached_ai_tools.len()
-                            );
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                        self.channels.mcp_status = Some(rx);
-                        break;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        break;
-                    }
+                PollAction::SwitchProvider(provider) => {
+                    self.switch_provider(provider);
                 }
             }
         }
-    }
-
-    /// Poll OAuth status updates from background authentication tasks
-    fn poll_oauth_status(&mut self) {
-        if let Some(mut rx) = self.channels.oauth_status.take() {
-            loop {
-                match rx.try_recv() {
-                    Ok(update) => {
-                        // Handle device code info (show to user)
-                        if let Some(device_info) = &update.device_code {
-                            self.popups.auth.set_device_code(
-                                &device_info.user_code,
-                                &device_info.verification_uri,
-                            );
-                        }
-
-                        if update.success {
-                            // Save the OAuth token
-                            if let Some(token) = update.token {
-                                if let Err(e) = self.save_oauth_token(update.provider, token) {
-                                    tracing::error!("Failed to save OAuth token: {}", e);
-                                    self.popups
-                                        .auth
-                                        .set_oauth_error(&format!("Failed to save token: {}", e));
-                                } else {
-                                    // Mark auth as complete
-                                    self.popups.auth.set_oauth_complete();
-
-                                    // Switch to the authenticated provider
-                                    if self.active_provider != update.provider {
-                                        self.switch_provider(update.provider);
-                                    }
-
-                                    self.messages.push((
-                                        "system".to_string(),
-                                        format!("{} authenticated via OAuth!", update.provider),
-                                    ));
-                                }
-                            }
-                        } else {
-                            // Show error
-                            self.popups.auth.set_oauth_error(&update.message);
-                        }
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                        self.channels.oauth_status = Some(rx);
-                        break;
-                    }
-                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Save OAuth token to storage
-    fn save_oauth_token(
-        &self,
-        provider: krusty_core::ai::providers::ProviderId,
-        token: krusty_core::auth::OAuthTokenData,
-    ) -> anyhow::Result<()> {
-        let mut store = krusty_core::auth::OAuthTokenStore::load()?;
-        store.set(provider, token);
-        store.save()?;
-        Ok(())
     }
 
     /// Tick all animations. Returns true if any animation is still running.
@@ -1575,10 +1467,22 @@ impl App {
             self.poll_init_exploration();
 
             // Poll MCP status updates from background tasks
-            self.poll_mcp_status();
+            let mcp_result = poll_mcp_status(&mut self.channels, &mut self.popups.mcp);
+            if mcp_result.needs_redraw {
+                self.needs_redraw = true;
+            }
+            self.process_poll_actions(mcp_result);
 
             // Poll OAuth status updates from background tasks
-            self.poll_oauth_status();
+            let oauth_result = poll_oauth_status(
+                &mut self.channels,
+                &mut self.popups.auth,
+                self.active_provider,
+            );
+            if oauth_result.needs_redraw {
+                self.needs_redraw = true;
+            }
+            self.process_poll_actions(oauth_result);
 
             // Poll update status and show toasts
             self.poll_update_status();
@@ -1587,7 +1491,11 @@ impl App {
             self.poll_terminal_panes();
 
             // Poll ProcessRegistry for background process status updates
-            self.poll_background_processes();
+            let process_result =
+                poll_background_processes(&self.process_registry, &mut self.blocks.bash);
+            if process_result.needs_redraw {
+                self.needs_redraw = true;
+            }
 
             // Tick toasts (auto-dismiss expired) - mark dirty if any expired
             if self.toasts.tick() {

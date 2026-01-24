@@ -2,23 +2,18 @@
 //!
 //! Handles status updates from background MCP connection tasks.
 
-use std::sync::Arc;
-
-use crate::ai::types::AiTool;
-use crate::tools::ToolRegistry;
 use crate::tui::popups::mcp_browser::McpBrowserPopup;
 use crate::tui::utils::AsyncChannels;
 
-use super::PollResult;
+use super::{PollAction, PollResult};
 
 /// Poll MCP status updates from background connection tasks
-#[allow(dead_code)]
+///
+/// Returns actions for App to execute (RefreshMcpPopup, RefreshAiTools)
+/// to avoid borrow conflicts with self methods.
 pub fn poll_mcp_status(
     channels: &mut AsyncChannels,
     mcp_popup: &mut McpBrowserPopup,
-    cached_ai_tools: &mut Vec<AiTool>,
-    tool_registry: &Arc<ToolRegistry>,
-    mut refresh_popup: impl FnMut(),
 ) -> PollResult {
     let mut result = PollResult::new();
 
@@ -39,16 +34,11 @@ pub fn poll_mcp_status(
                 };
                 mcp_popup.set_status(status_msg);
 
-                // Refresh server list to show updated state
-                refresh_popup();
+                // Queue actions for App to execute after borrow ends
+                result = result.with_action(PollAction::RefreshMcpPopup);
 
-                // Refresh cached AI tools so new MCP tools are sent to the API
                 if update.success {
-                    *cached_ai_tools = futures::executor::block_on(tool_registry.get_ai_tools());
-                    tracing::info!(
-                        "Refreshed AI tools after MCP update, total: {}",
-                        cached_ai_tools.len()
-                    );
+                    result = result.with_action(PollAction::RefreshAiTools);
                 }
             }
             Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {

@@ -11,7 +11,6 @@ use super::PollResult;
 
 /// Poll ProcessRegistry for background process status updates
 /// Updates BashBlocks that are tracking background processes
-#[allow(dead_code)]
 pub fn poll_background_processes(
     process_registry: &Arc<ProcessRegistry>,
     bash_blocks: &mut [BashBlock],

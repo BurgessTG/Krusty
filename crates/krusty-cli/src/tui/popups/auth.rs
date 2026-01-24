@@ -749,7 +749,6 @@ impl AuthPopup {
             ProviderId::MiniMax => "https://platform.minimax.io/",
             ProviderId::Kimi => "https://platform.moonshot.cn/",
             ProviderId::OpenAI => "https://platform.openai.com/api-keys",
-            ProviderId::ClaudeCodeAcp => "https://console.anthropic.com/", // Uses Anthropic API
         };
 
         let instructions = Paragraph::new(vec![

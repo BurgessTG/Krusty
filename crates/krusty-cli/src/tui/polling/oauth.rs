@@ -8,15 +8,15 @@ use krusty_core::auth::{OAuthTokenData, OAuthTokenStore};
 use crate::tui::popups::auth::AuthPopup;
 use crate::tui::utils::AsyncChannels;
 
-use super::PollResult;
+use super::{PollAction, PollResult};
 
 /// Poll OAuth status updates from background authentication tasks
-#[allow(dead_code)]
+///
+/// Returns actions for App to execute (SwitchProvider) to avoid borrow conflicts.
 pub fn poll_oauth_status(
     channels: &mut AsyncChannels,
     auth_popup: &mut AuthPopup,
     active_provider: ProviderId,
-    mut switch_provider: impl FnMut(ProviderId),
 ) -> PollResult {
     let mut result = PollResult::new();
 
@@ -45,9 +45,10 @@ pub fn poll_oauth_status(
                             // Mark auth as complete
                             auth_popup.set_oauth_complete();
 
-                            // Switch to the authenticated provider
+                            // Queue provider switch if needed
                             if active_provider != update.provider {
-                                switch_provider(update.provider);
+                                result =
+                                    result.with_action(PollAction::SwitchProvider(update.provider));
                             }
 
                             result = result.with_message(
@@ -75,7 +76,6 @@ pub fn poll_oauth_status(
 }
 
 /// Save OAuth token to storage
-#[allow(dead_code)]
 fn save_oauth_token(provider: ProviderId, token: OAuthTokenData) -> anyhow::Result<()> {
     let mut store = OAuthTokenStore::load()?;
     store.set(provider, token);

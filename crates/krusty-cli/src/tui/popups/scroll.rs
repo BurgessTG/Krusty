@@ -95,7 +95,6 @@ impl ScrollState {
     pub fn items_below(&self) -> usize {
         self.total.saturating_sub(self.offset + self.visible_height)
     }
-
 }
 
 #[cfg(test)]

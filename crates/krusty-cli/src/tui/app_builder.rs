@@ -194,7 +194,8 @@ fn init_session_manager(db_path: &Path) -> Option<SessionManager> {
 
 /// Initialize plan manager with migration
 fn init_plan_manager(db_path: &Path) -> PlanManager {
-    let plan_manager = PlanManager::new(db_path.to_path_buf()).expect("Failed to create plan manager");
+    let plan_manager =
+        PlanManager::new(db_path.to_path_buf()).expect("Failed to create plan manager");
 
     // Migrate legacy file-based plans
     match plan_manager.migrate_legacy_plans() {

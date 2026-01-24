@@ -12,31 +12,36 @@ mod mcp;
 mod oauth;
 mod processes;
 
-// Currently integrated
 pub use bash::poll_bash_output;
 pub use blocks::{poll_build_progress, poll_explore_progress};
-
-// Future integration (require more refactoring due to borrow conflicts)
-#[allow(unused_imports)]
-pub use blocks::poll_init_exploration;
-#[allow(unused_imports)]
 pub use mcp::poll_mcp_status;
-#[allow(unused_imports)]
 pub use oauth::poll_oauth_status;
-#[allow(unused_imports)]
 pub use processes::poll_background_processes;
 
-#[allow(unused_imports)]
-use crate::tui::utils::AsyncChannels;
+use krusty_core::ai::providers::ProviderId;
 
 /// Result of a polling operation that may trigger UI updates
 #[derive(Debug, Default)]
 pub struct PollResult {
     /// Whether any data was received that requires a redraw
     pub needs_redraw: bool,
-    /// Messages to append to the conversation (for future use when all pollers return PollResult)
-    #[allow(dead_code)]
+    /// Messages to append to the conversation
     pub messages: Vec<(String, String)>,
+    /// Actions for App to take after polling (avoids borrow conflicts)
+    pub actions: Vec<PollAction>,
+}
+
+/// Actions that App should take after polling completes
+/// This pattern avoids borrow conflicts - pollers return what to do,
+/// App executes after borrows are released
+#[derive(Debug, Clone)]
+pub enum PollAction {
+    /// Refresh MCP popup server list
+    RefreshMcpPopup,
+    /// Refresh cached AI tools
+    RefreshAiTools,
+    /// Switch to a provider (after OAuth success)
+    SwitchProvider(ProviderId),
 }
 
 impl PollResult {
@@ -44,28 +49,13 @@ impl PollResult {
         Self::default()
     }
 
-    #[allow(dead_code)]
-    pub fn with_redraw(mut self) -> Self {
-        self.needs_redraw = true;
-        self
-    }
-
-    #[allow(dead_code)]
     pub fn with_message(mut self, role: impl Into<String>, content: impl Into<String>) -> Self {
         self.messages.push((role.into(), content.into()));
         self
     }
 
-    /// Merge another result into this one
-    #[allow(dead_code)]
-    pub fn merge(&mut self, other: PollResult) {
-        self.needs_redraw |= other.needs_redraw;
-        self.messages.extend(other.messages);
+    pub fn with_action(mut self, action: PollAction) -> Self {
+        self.actions.push(action);
+        self
     }
-}
-
-/// Context for polling operations that need access to services
-#[allow(dead_code)]
-pub struct PollContext<'a> {
-    pub channels: &'a mut AsyncChannels,
 }
