@@ -1,48 +1,76 @@
 # Krusty Development Guide
 
+## Philosophy
+
+Krusty aims to be best-in-class: elegant, performant, organized, modular, and idiomatic Rust. Every component should feel polished and professional.
+
+## Code Style
+
+- **Minimal comments** - Code should be self-documenting. Comments only for complex logic or non-obvious decisions.
+- **Idiomatic Rust** - Follow Rust conventions. Use iterators over loops, Option/Result over nulls/exceptions.
+- **No over-engineering** - YAGNI principle. Don't add abstractions until needed.
+- **Avoid unsafe** - No unsafe code unless absolutely necessary with clear justification.
+- **Minimize dependencies** - Prefer stdlib, only add deps when they provide clear value.
+
+## Error Handling
+
+Use `anyhow::Result` everywhere with `.context()` for debugging:
+```rust
+let file = std::fs::read_to_string(&path)
+    .context("Failed to read config file")?;
+```
+
+## Architecture
+
+- **Trait-based extensibility** - `Tool`, `PreToolHook`, `PostToolHook` patterns
+- **Arc/RwLock for shared state** - Thread-safe by default
+- **Async-first** - tokio runtime, `#[async_trait]`
+- **Tracing for logging** - Debug-friendly spans and events
+
+## Making Changes
+
+Be **proactive**: refactor when beneficial, modernize patterns, optimize freely. Don't just fix the immediate issue - improve the surrounding code if it makes sense.
+
+## Testing
+
+Tests on request only. When adding tests:
+- Inline tests: `#[cfg(test)] mod tests { }` at file end
+- Use descriptive test names that explain the scenario
+
 ## Before Committing
 
-Always run these checks before committing changes:
-
 ```bash
-# Format all code
 cargo fmt --all
-
-# Check for clippy warnings (must pass with no warnings)
 cargo clippy --workspace -- -D warnings
 ```
 
-Both commands must pass without errors for CI to succeed.
+Both must pass. Use conventional commits:
+- `feat:` - New features
+- `fix:` - Bug fixes
+- `refactor:` - Code changes that don't add features or fix bugs
+- `chore:` - Maintenance tasks
+- `docs:` - Documentation only
 
 ## Project Structure
 
 - `crates/krusty-cli/` - CLI application with TUI
 - `crates/krusty-core/` - Core library (AI providers, tools, ACP, storage)
 
-Note: The Zed editor extension is in a separate repository.
-
-## Building
+## Building & Testing
 
 ```bash
 cargo build --workspace
-```
-
-## Testing
-
-```bash
 cargo test --workspace
 ```
 
 ## ACP Mode
 
-Krusty supports the Agent Client Protocol (ACP) for editor integrations:
-
+Editor integration via Agent Client Protocol:
 ```bash
 krusty acp
 ```
 
-Environment variables for ACP:
+Environment variables:
 - `KRUSTY_PROVIDER` - Provider name (anthropic, openrouter, opencodezen, zai, minimax, kimi)
 - `KRUSTY_API_KEY` - API key for the provider
 - `KRUSTY_MODEL` - Optional model override
-- Or use provider-specific keys: `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, etc.
