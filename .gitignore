@@ -2,6 +2,7 @@
 
 # Internal documentation and plans
 docs/
+CLAUDE.md
 
 # Build outputs
 target/
