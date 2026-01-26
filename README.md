@@ -68,8 +68,9 @@ Switch providers and models anytime with `/model` or `Ctrl+M`.
 | `Ctrl+N` | New session |
 | `Ctrl+P` | View background processes |
 | `Ctrl+K` | Open command palette |
-| `Ctrl+B` | Toggle BUILD/PLAN mode |
+| `Ctrl+G` | Toggle BUILD/PLAN mode |
 | `Ctrl+T` | Toggle plan sidebar |
+| `Ctrl+P` | Open plugin window |
 | `Ctrl+Q` | Quit application |
 | `Ctrl+V` | Paste text or image |
 | `Ctrl+W` | Delete word |
