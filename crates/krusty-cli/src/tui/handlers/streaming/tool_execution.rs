@@ -4,13 +4,13 @@
 
 use tokio::sync::{mpsc, oneshot};
 
-use crate::agent::dual_mind::{DialogueResult, Observation};
+use crate::agent::dual_mind::{DialogueResult, Observation, ObservedAction};
 use crate::agent::subagent::AgentProgress;
 use crate::ai::types::{AiToolCall, Content};
 use crate::tools::{ToolContext, ToolOutputChunk};
 use crate::tui::app::App;
 use crate::tui::components::{PromptOption, PromptQuestion};
-use crate::tui::utils::{DualMindPhase, DualMindUpdate};
+use crate::tui::utils::DualMindUpdate;
 
 impl App {
     /// Handle enter_plan_mode tool calls to switch modes
@@ -660,50 +660,30 @@ impl App {
                 let tool_name = tool_call.name.clone();
 
                 // Pre-review: Little Claw questions the intent before execution
+                // Only for significant tools, not trivial operations
                 if let Some(ref dm) = dual_mind {
-                    let intent = format!(
-                        "About to execute {} tool: {}",
-                        tool_name,
-                        serde_json::to_string_pretty(&tool_call.arguments).unwrap_or_default()
-                    );
-                    let (review_result, dialogue) = {
+                    // Create concise intent summary (not full JSON dump)
+                    let intent = create_intent_summary(&tool_name, &tool_call.arguments);
+
+                    let review_result = {
                         let mut dm_guard = dm.write().await;
-                        let result = dm_guard.pre_review(&intent).await;
-                        let dialogue = dm_guard.format_dialogue();
-                        (result, dialogue)
+                        dm_guard.pre_review(&intent).await
                     };
 
-                    // Send dialogue update to UI
-                    if let Some(ref tx) = dual_mind_tx {
-                        if !dialogue.is_empty() {
+                    // Only act on actual concerns - approvals are silent
+                    if let DialogueResult::NeedsEnhancement { critique, .. } = review_result {
+                        tracing::info!(
+                            "Little Claw raised concern before {}: {}",
+                            tool_name,
+                            critique
+                        );
+                        // Send enhancement for potential UI display
+                        if let Some(ref tx) = dual_mind_tx {
                             let _ = tx.send(DualMindUpdate {
-                                dialogue: dialogue.clone(),
-                                phase: DualMindPhase::PreReview,
-                                enhancement: None,
+                                enhancement: Some(critique),
+                                review_output: None,
                             });
                         }
-                    }
-
-                    match review_result {
-                        DialogueResult::NeedsEnhancement { critique, .. } => {
-                            tracing::info!(
-                                "Little Claw raised concern before {}: {}",
-                                tool_name,
-                                critique
-                            );
-                            // Send enhancement for UI display
-                            if let Some(ref tx) = dual_mind_tx {
-                                let _ = tx.send(DualMindUpdate {
-                                    dialogue: String::new(),
-                                    phase: DualMindPhase::PreReview,
-                                    enhancement: Some(critique),
-                                });
-                            }
-                        }
-                        DialogueResult::Consensus { .. } | DialogueResult::Refined { .. } => {
-                            tracing::debug!("Little Claw approved {} execution", tool_name);
-                        }
-                        _ => {}
                     }
                 }
                 let working_dir =
@@ -753,62 +733,51 @@ impl App {
                 if let Some(result) = result {
                     // Sync observation to Little Claw (so it knows what happened)
                     if let Some(ref dm) = dual_mind {
-                        let summary = if result.is_error {
-                            format!("Error: {}", &result.output)
-                        } else if result.output.len() > 500 {
-                            format!("{}...[truncated]", &result.output[..500])
-                        } else {
-                            result.output.clone()
-                        };
-                        let observation =
-                            Observation::tool_result(&tool_name, &summary, !result.is_error);
+                        let observation = create_observation(
+                            &tool_name,
+                            &tool_call.arguments,
+                            &result.output,
+                            !result.is_error,
+                        );
                         let dm_guard = dm.read().await;
                         dm_guard.little_claw().observe(observation).await;
                     }
 
                     // Post-review: Little Claw validates the output
+                    // Only reviews successful, non-trivial outputs
                     let final_output = if let Some(ref dm) = dual_mind {
-                        if !result.is_error {
-                            let (review_result, dialogue) = {
+                        if !result.is_error && result.output.len() > 100 {
+                            let review_result = {
                                 let mut dm_guard = dm.write().await;
-                                let result = dm_guard.post_review(&result.output).await;
-                                let dialogue = dm_guard.format_dialogue();
-                                (result, dialogue)
+                                dm_guard.post_review(&result.output).await
                             };
 
-                            // Send dialogue update to UI
-                            if let Some(ref tx) = dual_mind_tx {
-                                if !dialogue.is_empty() {
+                            // Only act on actual concerns
+                            if let DialogueResult::NeedsEnhancement { critique, .. } = review_result
+                            {
+                                tracing::info!(
+                                    "Little Claw found issue with {} output: {}",
+                                    tool_name,
+                                    critique
+                                );
+                                // Send enhancement notification with review output for insight extraction
+                                if let Some(ref tx) = dual_mind_tx {
                                     let _ = tx.send(DualMindUpdate {
-                                        dialogue,
-                                        phase: DualMindPhase::PostReview,
-                                        enhancement: None,
+                                        enhancement: Some(critique.clone()),
+                                        review_output: Some(critique.clone()),
                                     });
                                 }
-                            }
-
-                            match review_result {
-                                DialogueResult::NeedsEnhancement { critique, .. } => {
-                                    tracing::info!(
-                                        "Little Claw found issue with {} output: {}",
-                                        tool_name,
-                                        critique
-                                    );
-                                    // Send enhancement for UI and inject into output
-                                    if let Some(ref tx) = dual_mind_tx {
-                                        let _ = tx.send(DualMindUpdate {
-                                            dialogue: String::new(),
-                                            phase: DualMindPhase::PostReview,
-                                            enhancement: Some(critique.clone()),
-                                        });
-                                    }
-                                    // Append critique to output so Big Claw sees it
-                                    format!(
-                                        "{}\n\n[Little Claw Review]: {}",
-                                        result.output, critique
-                                    )
+                                // Append critique to output so Big Claw sees it
+                                format!("{}\n\n[Quality Review]: {}", result.output, critique)
+                            } else {
+                                // Send review output for insight extraction even on approval
+                                if let Some(ref tx) = dual_mind_tx {
+                                    let _ = tx.send(DualMindUpdate {
+                                        enhancement: None,
+                                        review_output: Some(result.output.clone()),
+                                    });
                                 }
-                                _ => result.output,
+                                result.output
                             }
                         } else {
                             result.output
@@ -1059,6 +1028,18 @@ impl App {
             return;
         }
 
+        // If decision prompt is visible, defer tool results until user decides
+        // This prevents the AI from continuing while waiting for user input
+        if self.decision_prompt.visible {
+            tracing::info!(
+                "Decision prompt visible - deferring {} tool results",
+                all_results.len()
+            );
+            self.pending_tool_results = all_results;
+            self.stop_tool_execution();
+            return;
+        }
+
         // Add tool results to conversation
         let tool_result_msg = crate::ai::types::ModelMessage {
             role: crate::ai::types::Role::User,
@@ -1160,5 +1141,122 @@ impl App {
                 break;
             }
         }
+    }
+}
+
+/// Create appropriate observation based on tool type
+/// Uses specific observation constructors for file operations to preserve path info
+fn create_observation(
+    tool_name: &str,
+    args: &serde_json::Value,
+    output: &str,
+    success: bool,
+) -> Observation {
+    // Truncate output for summary
+    let summary = if output.len() > 500 {
+        format!("{}...[truncated]", &output[..500])
+    } else {
+        output.to_string()
+    };
+
+    match tool_name {
+        "edit" => {
+            let path = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            if success {
+                Observation::file_edit(path, &summary, output)
+            } else {
+                Observation::tool_result(
+                    tool_name,
+                    &format!("Failed to edit {}: {}", path, summary),
+                    false,
+                )
+            }
+        }
+        "write" => {
+            let path = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            if success {
+                Observation::file_write(path, &summary)
+            } else {
+                Observation::tool_result(
+                    tool_name,
+                    &format!("Failed to write {}: {}", path, summary),
+                    false,
+                )
+            }
+        }
+        "read" => {
+            let path = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            Observation {
+                action: ObservedAction::FileRead {
+                    path: path.to_string(),
+                },
+                summary: format!("Read {}", path),
+                content: Some(summary),
+                success,
+            }
+        }
+        "bash" => {
+            let cmd = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            Observation::bash(cmd, output, success)
+        }
+        _ => Observation::tool_result(tool_name, &summary, success),
+    }
+}
+
+/// Create a concise intent summary for Little Claw review
+/// Avoids dumping full JSON - extracts key info only
+fn create_intent_summary(tool_name: &str, args: &serde_json::Value) -> String {
+    match tool_name {
+        "edit" => {
+            let file = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            format!("Edit file: {}", file)
+        }
+        "write" => {
+            let file = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            format!("Write file: {}", file)
+        }
+        "read" => {
+            let file = args
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            format!("Read file: {}", file)
+        }
+        "bash" => {
+            let cmd = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            // Truncate long commands
+            let cmd_preview = if cmd.len() > 100 {
+                format!("{}...", &cmd[..100])
+            } else {
+                cmd.to_string()
+            };
+            format!("Run command: {}", cmd_preview)
+        }
+        "grep" | "glob" => {
+            let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
+            format!("{}: {}", tool_name, pattern)
+        }
+        _ => format!("Execute {} tool", tool_name),
     }
 }

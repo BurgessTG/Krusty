@@ -22,17 +22,14 @@ mod roles;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info};
 
-use crate::agent::AgentCancellation;
 use crate::ai::client::AiClient;
-use crate::ai::types::ModelMessage;
 use crate::tools::ToolRegistry;
 
-pub use dialogue::{DialogueManager, DialogueResult, DialogueTurn, Speaker};
-pub use little_claw::LittleClaw;
-pub use observation::Observation;
+pub use dialogue::{DialogueResult, DialogueTurn, Speaker};
+pub use little_claw::{extract_insight_patterns, is_trivial_response, LittleClaw};
+pub use observation::{Observation, ObservedAction};
 pub use roles::ClawRole;
 
 /// Configuration for the dual-mind system
@@ -61,23 +58,8 @@ impl Default for DualMindConfig {
 /// Manages two independent agent contexts that work together.
 /// Big Claw executes, Little Claw questions and validates.
 pub struct DualMind {
-    /// The AI client (shared, but each claw gets independent calls)
-    #[allow(dead_code)]
-    client: Arc<AiClient>,
-
-    /// Big Claw's conversation history (reference, managed externally)
-    #[allow(dead_code)]
-    big_claw_messages: Arc<RwLock<Vec<ModelMessage>>>,
-
     /// Little Claw instance
     little_claw: LittleClaw,
-
-    /// Communication channel between claws
-    dialogue: DialogueManager,
-
-    /// Cancellation token
-    #[allow(dead_code)]
-    cancellation: AgentCancellation,
 
     /// Configuration
     config: DualMindConfig,
@@ -88,27 +70,17 @@ pub struct DualMind {
 
 impl DualMind {
     /// Create a new dual-mind system
-    pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
-        let (dialogue_tx, dialogue_rx) = mpsc::unbounded_channel();
-
+    pub fn new(client: Arc<AiClient>) -> Self {
         Self {
-            client: client.clone(),
-            big_claw_messages: Arc::new(RwLock::new(Vec::new())),
-            little_claw: LittleClaw::new(client, dialogue_tx),
-            dialogue: DialogueManager::new(dialogue_rx),
-            cancellation,
+            little_claw: LittleClaw::new(client),
             config: DualMindConfig::default(),
             current_dialogue: Vec::new(),
         }
     }
 
     /// Create with custom configuration
-    pub fn with_config(
-        client: Arc<AiClient>,
-        cancellation: AgentCancellation,
-        config: DualMindConfig,
-    ) -> Self {
-        let mut dual_mind = Self::new(client, cancellation);
+    pub fn with_config(client: Arc<AiClient>, config: DualMindConfig) -> Self {
+        let mut dual_mind = Self::new(client);
         dual_mind.config = config;
         dual_mind
     }
@@ -116,23 +88,16 @@ impl DualMind {
     /// Create with tools for Little Claw research
     pub fn with_tools(
         client: Arc<AiClient>,
-        cancellation: AgentCancellation,
         config: DualMindConfig,
         tools: Arc<ToolRegistry>,
         working_dir: PathBuf,
     ) -> Self {
-        let (dialogue_tx, dialogue_rx) = mpsc::unbounded_channel();
-
-        let little_claw = LittleClaw::new(client.clone(), dialogue_tx)
+        let little_claw = LittleClaw::new(client)
             .with_tools(tools)
             .with_working_dir(working_dir);
 
         Self {
-            client,
-            big_claw_messages: Arc::new(RwLock::new(Vec::new())),
             little_claw,
-            dialogue: DialogueManager::new(dialogue_rx),
-            cancellation,
             config,
             current_dialogue: Vec::new(),
         }
@@ -194,6 +159,16 @@ impl DualMind {
             return DialogueResult::Skipped;
         }
 
+        // Prevent infinite discussion loops
+        if self.at_max_depth() {
+            debug!(
+                depth = self.dialogue_depth(),
+                max = self.config.max_discussion_depth * 2,
+                "Hit max discussion depth, Big Claw proceeds"
+            );
+            return DialogueResult::Skipped;
+        }
+
         info!("Little Claw reviewing intent before action");
 
         // Add Big Claw's intent to dialogue
@@ -219,6 +194,16 @@ impl DualMind {
     /// Returns Enhancement if quality issues found.
     pub async fn post_review(&mut self, output: &str) -> DialogueResult {
         if !self.config.enabled {
+            return DialogueResult::Skipped;
+        }
+
+        // Prevent infinite discussion loops
+        if self.at_max_depth() {
+            debug!(
+                depth = self.dialogue_depth(),
+                max = self.config.max_discussion_depth * 2,
+                "Hit max discussion depth, skipping post-review"
+            );
             return DialogueResult::Skipped;
         }
 
@@ -279,7 +264,6 @@ impl DualMind {
     pub async fn clear(&mut self) {
         self.little_claw.clear().await;
         self.current_dialogue.clear();
-        self.dialogue.clear();
     }
 
     /// Get current dialogue depth
@@ -296,15 +280,13 @@ impl DualMind {
 /// Builder for DualMind
 pub struct DualMindBuilder {
     client: Arc<AiClient>,
-    cancellation: AgentCancellation,
     config: DualMindConfig,
 }
 
 impl DualMindBuilder {
-    pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
+    pub fn new(client: Arc<AiClient>) -> Self {
         Self {
             client,
-            cancellation,
             config: DualMindConfig::default(),
         }
     }
@@ -325,6 +307,6 @@ impl DualMindBuilder {
     }
 
     pub fn build(self) -> DualMind {
-        DualMind::with_config(self.client, self.cancellation, self.config)
+        DualMind::with_config(self.client, self.config)
     }
 }

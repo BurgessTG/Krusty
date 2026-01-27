@@ -54,6 +54,6 @@ pub use user_hooks::{
 
 // Dual-mind system (Big Claw / Little Claw)
 pub use dual_mind::{
-    ClawRole, DialogueManager, DialogueResult, DialogueTurn, DualMind, DualMindBuilder,
-    DualMindConfig, LittleClaw, Observation, Speaker,
+    ClawRole, DialogueResult, DialogueTurn, DualMind, DualMindBuilder, DualMindConfig, LittleClaw,
+    Observation, Speaker,
 };

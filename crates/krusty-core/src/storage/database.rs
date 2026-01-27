@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use tracing::info;
 
 /// Current schema version
-const SCHEMA_VERSION: i32 = 11;
+const SCHEMA_VERSION: i32 = 12;
 
 /// Shared database handle for connection reuse
 ///
@@ -437,6 +437,83 @@ impl Database {
                 "#,
             )?;
             self.set_schema_version(11)?;
+        }
+
+        // Migration 12: Smart Codebase Memory System
+        if current_version < 12 {
+            info!("Running migration 12: Smart Codebase Memory System");
+            self.conn.execute_batch(
+                r#"
+                -- Codebases: First-class codebase entity
+                CREATE TABLE IF NOT EXISTS codebases (
+                    id TEXT PRIMARY KEY,
+                    path TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    indexed_at TEXT,
+                    index_version INTEGER NOT NULL DEFAULT 0,
+                    config TEXT DEFAULT '{}'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_codebases_path ON codebases(path);
+
+                -- Codebase index: Semantic code symbol index
+                CREATE TABLE IF NOT EXISTS codebase_index (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    codebase_id TEXT NOT NULL REFERENCES codebases(id) ON DELETE CASCADE,
+                    symbol_type TEXT NOT NULL,
+                    symbol_name TEXT NOT NULL,
+                    symbol_path TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    line_start INTEGER NOT NULL,
+                    line_end INTEGER NOT NULL,
+                    signature TEXT,
+                    summary TEXT,
+                    embedding BLOB,
+                    calls TEXT DEFAULT '[]',
+                    indexed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_codebase_index_codebase ON codebase_index(codebase_id);
+                CREATE INDEX IF NOT EXISTS idx_codebase_index_symbol ON codebase_index(symbol_name);
+                CREATE INDEX IF NOT EXISTS idx_codebase_index_file ON codebase_index(file_path);
+                CREATE INDEX IF NOT EXISTS idx_codebase_index_type ON codebase_index(symbol_type);
+
+                -- Codebase insights: Accumulated knowledge from sessions
+                CREATE TABLE IF NOT EXISTS codebase_insights (
+                    id TEXT PRIMARY KEY,
+                    codebase_id TEXT NOT NULL REFERENCES codebases(id) ON DELETE CASCADE,
+                    insight_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding BLOB,
+                    confidence REAL NOT NULL DEFAULT 0.5,
+                    source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    last_accessed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_codebase_insights_codebase ON codebase_insights(codebase_id);
+                CREATE INDEX IF NOT EXISTS idx_codebase_insights_type ON codebase_insights(insight_type);
+                CREATE INDEX IF NOT EXISTS idx_codebase_insights_confidence ON codebase_insights(confidence DESC);
+
+                -- Session memories: Session-level learnings (may promote to insights)
+                CREATE TABLE IF NOT EXISTS session_memories (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                    memory_type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    promoted_to_insight_id TEXT REFERENCES codebase_insights(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_session_memories_session ON session_memories(session_id);
+                CREATE INDEX IF NOT EXISTS idx_session_memories_type ON session_memories(memory_type);
+
+                -- Link sessions to codebases
+                ALTER TABLE sessions ADD COLUMN codebase_id TEXT REFERENCES codebases(id);
+                "#,
+            )?;
+            self.set_schema_version(12)?;
         }
 
         info!("Migrations complete");

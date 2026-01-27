@@ -14,6 +14,7 @@ pub mod ai;
 pub mod auth;
 pub mod constants;
 pub mod extensions;
+pub mod index;
 pub mod lsp;
 pub mod mcp;
 pub mod paths;
@@ -28,6 +29,10 @@ pub mod updater;
 pub use ai::client::{AiClient, AiClientConfig, CallOptions, KRUSTY_SYSTEM_PROMPT};
 pub use ai::streaming::StreamPart;
 pub use ai::types::{AiTool, AiToolCall, Content, ModelMessage, Role};
+pub use index::{
+    CodebaseInsight, CodebaseStore, EmbeddingEngine, IndexPhase, IndexProgress, Indexer,
+    InsightStore, InsightType, SemanticRetrieval,
+};
 pub use mcp::McpManager;
 pub use skills::SkillsManager;
 pub use storage::{Database, SessionManager};

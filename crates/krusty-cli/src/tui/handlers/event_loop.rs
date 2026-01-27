@@ -36,7 +36,53 @@ impl App {
 
     /// Poll dual-mind dialogue channel for Big Claw / Little Claw updates
     pub(crate) fn poll_dual_mind(&mut self) -> PollResult {
-        poll_dual_mind(&mut self.channels)
+        let (result, extracted_insights) = poll_dual_mind(&mut self.channels);
+
+        // Save extracted insights if we have database access and a codebase
+        if let Some(insights) = extracted_insights {
+            if let (Some(sm), Some(session_id)) =
+                (&self.services.session_manager, &self.current_session_id)
+            {
+                let conn = sm.db().conn();
+                // Get codebase_id for current working directory
+                let working_dir_str = self.working_dir.to_string_lossy().to_string();
+                if let Ok(Some(codebase)) =
+                    krusty_core::index::CodebaseStore::new(conn).get_by_path(&working_dir_str)
+                {
+                    let insight_store = krusty_core::index::InsightStore::new(conn);
+
+                    for content in &insights.insights {
+                        // Check for duplicates before saving
+                        match insight_store.has_similar(&codebase.id, content) {
+                            Ok(false) => {
+                                let insight = krusty_core::index::insights::create_insight(
+                                    &codebase.id,
+                                    content,
+                                    Some(session_id),
+                                    0.6,
+                                );
+                                if let Err(e) = insight_store.create(&insight) {
+                                    tracing::warn!(error = %e, "Failed to save insight");
+                                } else {
+                                    tracing::info!(
+                                        insight_type = ?insight.insight_type,
+                                        "Saved new codebase insight from review"
+                                    );
+                                }
+                            }
+                            Ok(true) => {
+                                tracing::debug!(content = %content, "Skipping duplicate insight");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "Failed to check for duplicate insight");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     /// Poll terminal panes for PTY output and update cursor animations

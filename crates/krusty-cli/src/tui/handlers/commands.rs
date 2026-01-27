@@ -263,15 +263,21 @@ impl App {
         let working_dir = self.working_dir.clone();
         let cancellation = self.cancellation.clone();
 
+        // Run codebase indexing synchronously before AI exploration
+        // (rusqlite connections are not Send, so this must run on the main thread)
+        if let Some(sm) = &self.services.session_manager {
+            run_codebase_indexing(sm.db().conn(), &working_dir);
+        }
+
         // Create result channel
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         self.channels.init_exploration = Some(result_rx);
 
-        // Create progress channel
+        // Create progress channel for exploration
         let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
         self.channels.init_progress = Some(progress_rx);
 
-        // Spawn async exploration task
+        // Spawn async exploration task for AI analysis
         tokio::spawn(async move {
             let pool = SubAgentPool::new(client, cancellation).with_concurrency(4);
 
@@ -832,4 +838,44 @@ pub fn generate_krab_from_exploration(
     content.push_str("<!-- Add project-specific instructions here -->\n\n");
 
     content
+}
+
+/// Run codebase indexing synchronously
+/// This must run on the main thread as rusqlite connections are not Send
+fn run_codebase_indexing(conn: &rusqlite::Connection, working_dir: &std::path::Path) {
+    use krusty_core::index::{CodebaseStore, Indexer};
+
+    // Create or get codebase entry
+    let codebase_store = CodebaseStore::new(conn);
+    let _codebase = match codebase_store.get_or_create(working_dir) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("Failed to create codebase entry: {}", e);
+            return;
+        }
+    };
+
+    // Create indexer (without embeddings for speed - can be enabled later)
+    let mut indexer = match Indexer::new() {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::warn!("Failed to create indexer: {}", e);
+            return;
+        }
+    };
+
+    // Run indexing (blocking - no progress channel for sync version)
+    let rt = tokio::runtime::Handle::current();
+    match rt.block_on(indexer.index_codebase(conn, working_dir, None)) {
+        Ok(codebase) => {
+            tracing::info!(
+                codebase_id = %codebase.id,
+                name = %codebase.name,
+                "Codebase indexed successfully"
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Codebase indexing failed: {}", e);
+        }
+    }
 }

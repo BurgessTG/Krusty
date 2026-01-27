@@ -16,6 +16,7 @@ use crate::ai::client::core::KRUSTY_SYSTEM_PROMPT;
 use crate::ai::client::AiClient;
 use crate::ai::streaming::StreamPart;
 use crate::ai::types::{AiTool, AiToolCall, Content, ModelMessage, Role};
+use crate::index::insights::{create_insight, InsightStore};
 use crate::tools::{ToolContext, ToolRegistry, ToolResult as ToolExecResult};
 
 /// Maximum agentic turns for Little Claw (prevent runaway research)
@@ -38,22 +39,18 @@ pub struct LittleClaw {
     /// Log of Big Claw's actions (for context sync)
     observation_log: Arc<RwLock<ObservationLog>>,
 
-    /// Channel to send dialogue turns
-    dialogue_tx: mpsc::UnboundedSender<DialogueTurn>,
-
     /// How many observations we've already processed
     observation_cursor: Arc<RwLock<usize>>,
 }
 
 impl LittleClaw {
-    pub fn new(client: Arc<AiClient>, dialogue_tx: mpsc::UnboundedSender<DialogueTurn>) -> Self {
+    pub fn new(client: Arc<AiClient>) -> Self {
         Self {
             client,
             tools: None,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             messages: Arc::new(RwLock::new(Vec::new())),
             observation_log: Arc::new(RwLock::new(ObservationLog::new())),
-            dialogue_tx,
             observation_cursor: Arc::new(RwLock::new(0)),
         }
     }
@@ -288,12 +285,11 @@ impl LittleClaw {
                 return DialogueResult::Skipped;
             }
 
-            // Send to dialogue channel
+            // Create dialogue turn for result
             let turn = DialogueTurn {
                 speaker: Speaker::LittleClaw,
                 content: response.clone(),
             };
-            let _ = self.dialogue_tx.send(turn.clone());
 
             // Add to our history
             {
@@ -372,13 +368,20 @@ impl LittleClaw {
     }
 
     /// Execute tool calls and add results to history
+    /// IMPORTANT: All tool results must be added in a SINGLE user message
     async fn execute_tool_calls(&self, tool_calls: &[AiToolCall]) {
+        let mut results: Vec<Content> = Vec::new();
+
         let Some(tools) = &self.tools else {
             // No tools available - add error results
             for tc in tool_calls {
-                self.add_tool_result(&tc.id, "Tools not available", true)
-                    .await;
+                results.push(Content::ToolResult {
+                    tool_use_id: tc.id.clone(),
+                    output: serde_json::Value::String("Tools not available".to_string()),
+                    is_error: Some(true),
+                });
             }
+            self.add_tool_results(results).await;
             return;
         };
 
@@ -390,12 +393,14 @@ impl LittleClaw {
         for tc in tool_calls {
             // Only allow read-only tools
             if !matches!(tc.name.as_str(), "Read" | "Grep" | "Glob") {
-                self.add_tool_result(
-                    &tc.id,
-                    &format!("Tool '{}' not allowed for Little Claw", tc.name),
-                    true,
-                )
-                .await;
+                results.push(Content::ToolResult {
+                    tool_use_id: tc.id.clone(),
+                    output: serde_json::Value::String(format!(
+                        "Tool '{}' not allowed for Little Claw",
+                        tc.name
+                    )),
+                    is_error: Some(true),
+                });
                 continue;
             }
 
@@ -415,60 +420,116 @@ impl LittleClaw {
                     } else {
                         output
                     };
-                    self.add_tool_result(&tc.id, &truncated, is_error).await;
+                    results.push(Content::ToolResult {
+                        tool_use_id: tc.id.clone(),
+                        output: serde_json::Value::String(truncated),
+                        is_error: Some(is_error),
+                    });
                 }
                 None => {
-                    self.add_tool_result(&tc.id, &format!("Tool '{}' not found", tc.name), true)
-                        .await;
+                    results.push(Content::ToolResult {
+                        tool_use_id: tc.id.clone(),
+                        output: serde_json::Value::String(format!("Tool '{}' not found", tc.name)),
+                        is_error: Some(true),
+                    });
                 }
             }
         }
+
+        // Add ALL tool results in a single user message (required by Anthropic API)
+        self.add_tool_results(results).await;
     }
 
-    /// Add a tool result to message history
-    async fn add_tool_result(&self, tool_use_id: &str, output: &str, is_error: bool) {
+    /// Add all tool results in a single user message
+    /// This is required by the API - tool results must follow their tool calls
+    async fn add_tool_results(&self, results: Vec<Content>) {
+        if results.is_empty() {
+            return;
+        }
         let mut messages = self.messages.write().await;
         messages.push(ModelMessage {
             role: Role::User,
-            content: vec![Content::ToolResult {
-                tool_use_id: tool_use_id.to_string(),
-                output: serde_json::Value::String(output.to_string()),
-                is_error: Some(is_error),
-            }],
+            content: results,
         });
     }
 
     /// Classify the response to determine the dialogue result type
+    ///
+    /// Uses conservative classification: ambiguous responses default to
+    /// NeedsEnhancement rather than silently approving.
     fn classify_response(&self, response: &str, turn: DialogueTurn) -> DialogueResult {
         let lower = response.to_lowercase();
+        let word_count = response.split_whitespace().count();
 
-        // Check for explicit approval
-        if lower.contains("proceed")
-            || lower.contains("approved")
-            || lower.contains("looks good")
-            || lower.contains("no issues")
-            || lower.contains("correct")
-        {
+        // Explicit approval patterns - must be clear and unambiguous
+        let approval_patterns = [
+            "proceed",
+            "approved",
+            "looks good",
+            "no issues",
+            "no concerns",
+            "lgtm",
+            "good to go",
+            "correct approach",
+            "appropriate",
+        ];
+
+        // Check for explicit approval (short responses with approval words)
+        let has_approval = approval_patterns.iter().any(|p| lower.contains(p));
+
+        // Concern patterns that indicate review needed
+        let concern_patterns = [
+            "enhance",
+            "should be",
+            "could be",
+            "issue",
+            "problem",
+            "concern",
+            "warning",
+            "careful",
+            "instead",
+            "rather",
+            "however",
+            "but ",
+            "although",
+            "consider",
+            "suggest",
+            "recommend",
+            "better to",
+            "might want",
+        ];
+
+        let has_concern = concern_patterns.iter().any(|p| lower.contains(p));
+
+        // Clear approval: has approval words, no concerns, short response
+        if has_approval && !has_concern && word_count < 30 {
             return DialogueResult::Consensus {
                 dialogue: vec![turn],
             };
         }
 
-        // Check for enhancement needed
-        if lower.contains("enhance")
-            || lower.contains("should be")
-            || lower.contains("could be")
-            || lower.contains("issue")
-            || lower.contains("problem")
-            || lower.contains("concern")
-        {
+        // Clear concern: has concern patterns
+        if has_concern {
             return DialogueResult::NeedsEnhancement {
                 dialogue: vec![turn.clone()],
                 critique: turn.content,
             };
         }
 
-        // Default: treat as consensus (Little Claw should be explicit)
+        // Ambiguous long responses should be reviewed (safety first)
+        if word_count > 50 {
+            debug!(
+                word_count = word_count,
+                "Long ambiguous response, treating as needing review"
+            );
+            return DialogueResult::NeedsEnhancement {
+                dialogue: vec![turn.clone()],
+                critique: turn.content,
+            };
+        }
+
+        // Short ambiguous responses: default to consensus
+        // (Little Claw was asked to be explicit, so short = likely ok)
         DialogueResult::Consensus {
             dialogue: vec![turn],
         }
@@ -489,4 +550,147 @@ impl LittleClaw {
         self.messages.write().await.clear();
         *self.observation_cursor.write().await = 0;
     }
+
+    /// Extract insights from review output and save to database
+    ///
+    /// This runs silently after post-review completes, extracting generalizable
+    /// learnings about the codebase without interrupting the user.
+    pub fn extract_insights(
+        review_output: &str,
+        codebase_id: &str,
+        session_id: &str,
+        insight_store: &InsightStore<'_>,
+    ) -> Vec<String> {
+        let mut saved_insights = Vec::new();
+
+        // Skip trivial responses that don't contain insights
+        if is_trivial_response(review_output) {
+            debug!("Skipping trivial response for insight extraction");
+            return saved_insights;
+        }
+
+        // Look for insight patterns in the review
+        let insights = extract_insight_patterns(review_output);
+
+        for insight_content in insights {
+            // Check for duplicates
+            match insight_store.has_similar(codebase_id, &insight_content) {
+                Ok(true) => {
+                    debug!(content = %insight_content, "Skipping duplicate insight");
+                    continue;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(error = %e, "Failed to check for duplicate insight");
+                    continue;
+                }
+            }
+
+            // Create and save the insight
+            let insight = create_insight(codebase_id, &insight_content, Some(session_id), 0.6);
+
+            match insight_store.create(&insight) {
+                Ok(_) => {
+                    info!(
+                        insight_id = %insight.id,
+                        insight_type = ?insight.insight_type,
+                        "Saved new codebase insight"
+                    );
+                    saved_insights.push(insight.content);
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to save insight");
+                }
+            }
+        }
+
+        saved_insights
+    }
+}
+
+/// Check if a response is trivial (just an approval with no substance)
+pub fn is_trivial_response(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let word_count = text.split_whitespace().count();
+
+    // Very short responses are trivial
+    if word_count < 10 {
+        return true;
+    }
+
+    // Simple approval patterns
+    let approval_patterns = [
+        "proceed",
+        "approved",
+        "looks good",
+        "lgtm",
+        "no issues",
+        "correct",
+        "good to go",
+    ];
+
+    // If the response is mostly just an approval phrase
+    for pattern in approval_patterns {
+        if lower.contains(pattern) && word_count < 20 {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Extract generalizable insight patterns from review text
+pub fn extract_insight_patterns(text: &str) -> Vec<String> {
+    let mut insights = Vec::new();
+
+    // Look for sentences that suggest generalizable patterns
+    let insight_markers = [
+        // Convention markers
+        "this codebase uses",
+        "the convention here is",
+        "the pattern in this project",
+        "consistently uses",
+        // Pitfall markers
+        "be careful",
+        "avoid",
+        "don't use",
+        "shouldn't",
+        "watch out for",
+        // Architecture markers
+        "the architecture",
+        "this module",
+        "the design pattern",
+        // Best practice markers
+        "best practice",
+        "should always",
+        "make sure to",
+        "remember to",
+    ];
+
+    // Split into sentences and check each
+    for sentence in text.split(['.', '!', '\n']) {
+        let trimmed = sentence.trim();
+        if trimmed.len() < 20 {
+            continue;
+        }
+
+        let lower = trimmed.to_lowercase();
+        for marker in insight_markers {
+            if lower.contains(marker) {
+                // Clean up the sentence
+                let cleaned = trimmed
+                    .trim_start_matches(|c: char| !c.is_alphanumeric())
+                    .to_string();
+
+                if cleaned.len() > 20 && !insights.contains(&cleaned) {
+                    insights.push(cleaned);
+                }
+                break;
+            }
+        }
+    }
+
+    // Limit to avoid noise
+    insights.truncate(3);
+    insights
 }

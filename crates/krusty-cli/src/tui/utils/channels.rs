@@ -60,18 +60,18 @@ pub struct OAuthStatusUpdate {
     pub token: Option<krusty_core::auth::OAuthTokenData>,
 }
 
-/// Dual-mind dialogue update from tool execution
+/// Dual-mind update from tool execution
+/// Only sent when Little Claw has actual concerns (not routine approvals)
 pub struct DualMindUpdate {
-    /// The dialogue content (formatted for display)
-    pub dialogue: String,
-    /// Whether this is a pre-review or post-review
-    pub phase: DualMindPhase,
     /// Enhancement critique if issues were found
     pub enhancement: Option<String>,
+    /// Full review output for insight extraction (post-review only)
+    pub review_output: Option<String>,
 }
 
-/// Phase of dual-mind review
+/// Phase of dual-mind review (kept for potential future use)
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum DualMindPhase {
     PreReview,
     PostReview,
