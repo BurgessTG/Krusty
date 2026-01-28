@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::agent::subagent::{SubAgentModel, SubAgentPool, SubAgentTask};
+use crate::agent::subagent::{SubAgentPool, SubAgentTask};
 use crate::agent::{AgentCancellation, SharedBuildContext};
 use crate::ai::client::AiClient;
 use crate::tools::registry::{Tool, ToolContext, ToolResult};
@@ -176,7 +176,6 @@ impl Tool for BuildTool {
 
                 let mut task = SubAgentTask::new(format!("builder-{}", i), task_prompt)
                     .with_name(name)
-                    .with_model(SubAgentModel::Opus)
                     .with_working_dir(ctx.working_dir.clone());
 
                 // Attach plan task ID if provided for auto-completion
@@ -193,17 +192,13 @@ impl Tool for BuildTool {
             tasks.push(
                 SubAgentTask::new("builder-main", params.prompt.clone())
                     .with_name("main")
-                    .with_model(SubAgentModel::Opus)
                     .with_working_dir(ctx.working_dir.clone()),
             );
         }
 
         info!("Build tool: Created {} builder tasks", tasks.len());
         for (i, task) in tasks.iter().enumerate() {
-            debug!(
-                "Builder {}: id={}, name={}, model={:?}",
-                i, task.id, task.name, task.model
-            );
+            debug!("Builder {}: id={}, name={}", i, task.id, task.name);
         }
 
         // Create pool and execute with build context

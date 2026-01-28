@@ -14,7 +14,9 @@ mod oauth;
 mod processes;
 
 pub use bash::poll_bash_output;
-pub use blocks::{poll_build_progress, poll_explore_progress, poll_init_exploration};
+pub use blocks::{
+    poll_build_progress, poll_explore_progress, poll_indexing_progress, poll_init_exploration,
+};
 pub use dual_mind::poll_dual_mind;
 pub use mcp::poll_mcp_status;
 pub use oauth::poll_oauth_status;

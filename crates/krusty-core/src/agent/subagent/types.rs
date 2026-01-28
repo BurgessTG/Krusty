@@ -113,45 +113,17 @@ pub enum AgentProgressStatus {
     Failed,
 }
 
-/// Available models for sub-agents
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SubAgentModel {
-    /// Claude Haiku 4.5 - fast and cheap, ideal for exploration
-    Haiku,
-    /// Claude Sonnet 4.5 - balanced, good for analysis
-    Sonnet,
-    /// Claude Opus 4.5 - powerful, for builder agents
-    Opus,
-}
-
-impl SubAgentModel {
-    pub fn model_id(&self) -> &'static str {
-        use crate::agent::constants::models;
-        match self {
-            SubAgentModel::Haiku => models::HAIKU_4_5,
-            SubAgentModel::Sonnet => models::SONNET_4_5,
-            SubAgentModel::Opus => models::OPUS_4_5,
-        }
-    }
-
-    pub fn max_tokens(&self) -> usize {
-        use crate::agent::constants::token_limits;
-        match self {
-            SubAgentModel::Haiku => token_limits::SMALL as usize,
-            SubAgentModel::Sonnet => token_limits::MEDIUM as usize,
-            SubAgentModel::Opus => token_limits::LARGE as usize,
-        }
-    }
-}
-
 /// Configuration for a sub-agent task
+///
+/// The model to use is determined by `SubAgentPool.override_model`, not by the task.
+/// This provides a provider-agnostic experience where all sub-agents use the user's
+/// current model.
 #[derive(Debug, Clone)]
 pub struct SubAgentTask {
     pub id: String,
     /// Display name for the agent (e.g., "tui", "agent", "main")
     pub name: String,
     pub prompt: String,
-    pub model: SubAgentModel,
     pub working_dir: PathBuf,
     /// Plan task ID this agent completes (for auto-marking)
     pub plan_task_id: Option<String>,
@@ -167,7 +139,6 @@ impl SubAgentTask {
             id,
             name,
             prompt: prompt.into(),
-            model: SubAgentModel::Haiku,
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             plan_task_id: None,
             thinking_enabled: false, // Default off for sub-agents
@@ -181,11 +152,6 @@ impl SubAgentTask {
 
     pub fn with_working_dir(mut self, dir: PathBuf) -> Self {
         self.working_dir = dir;
-        self
-    }
-
-    pub fn with_model(mut self, model: SubAgentModel) -> Self {
-        self.model = model;
         self
     }
 

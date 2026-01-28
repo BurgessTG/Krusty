@@ -36,10 +36,9 @@ impl App {
                 .unwrap_or(false);
 
             if clear_existing {
-                self.active_plan = None;
+                self.clear_plan();
                 tracing::info!("Cleared existing plan");
             }
-
             self.ui.work_mode = WorkMode::Plan;
             tracing::info!("Switched to Plan mode: {}", reason);
 
@@ -631,7 +630,11 @@ impl App {
             {
                 use std::io::Write;
                 let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                let _ = writeln!(file, "\n[{}] TOOL EXECUTION: dual_mind is ACTIVE", timestamp);
+                let _ = writeln!(
+                    file,
+                    "\n[{}] TOOL EXECUTION: dual_mind is ACTIVE",
+                    timestamp
+                );
             }
             Some(tx)
         } else {
@@ -686,8 +689,7 @@ impl App {
                     "edit" | "write" | "bash" | "build" | "Edit" | "Write" | "Bash"
                 );
 
-                if is_mutating_tool && dual_mind.is_some() {
-                    let dm = dual_mind.as_ref().unwrap();
+                if let (true, Some(dm)) = (is_mutating_tool, dual_mind.as_ref()) {
                     // Create concise intent summary (not full JSON dump)
                     let intent = create_intent_summary(&tool_name, &tool_call.arguments);
 
@@ -771,45 +773,44 @@ impl App {
 
                     // Post-review: Little Claw validates the output
                     // Only reviews mutating tools with successful, non-trivial outputs
-                    let final_output = if is_mutating_tool
-                        && !result.is_error
-                        && result.output.len() > 100
-                    {
-                        if let Some(ref dm) = dual_mind {
-                            let review_result = {
-                                let mut dm_guard = dm.write().await;
-                                dm_guard.post_review(&result.output).await
-                            };
+                    let final_output =
+                        if is_mutating_tool && !result.is_error && result.output.len() > 100 {
+                            if let Some(ref dm) = dual_mind {
+                                let review_result = {
+                                    let mut dm_guard = dm.write().await;
+                                    dm_guard.post_review(&result.output).await
+                                };
 
-                            if let DialogueResult::NeedsEnhancement { critique, .. } = review_result
-                            {
-                                tracing::info!(
-                                    "Little Claw found issue with {} output: {}",
-                                    tool_name,
-                                    critique
-                                );
-                                if let Some(ref tx) = dual_mind_tx {
-                                    let _ = tx.send(DualMindUpdate {
-                                        enhancement: Some(critique.clone()),
-                                        review_output: Some(critique.clone()),
-                                    });
+                                if let DialogueResult::NeedsEnhancement { critique, .. } =
+                                    review_result
+                                {
+                                    tracing::info!(
+                                        "Little Claw found issue with {} output: {}",
+                                        tool_name,
+                                        critique
+                                    );
+                                    if let Some(ref tx) = dual_mind_tx {
+                                        let _ = tx.send(DualMindUpdate {
+                                            enhancement: Some(critique.clone()),
+                                            review_output: Some(critique.clone()),
+                                        });
+                                    }
+                                    format!("{}\n\n[Quality Review]: {}", result.output, critique)
+                                } else {
+                                    if let Some(ref tx) = dual_mind_tx {
+                                        let _ = tx.send(DualMindUpdate {
+                                            enhancement: None,
+                                            review_output: Some(result.output.clone()),
+                                        });
+                                    }
+                                    result.output
                                 }
-                                format!("{}\n\n[Quality Review]: {}", result.output, critique)
                             } else {
-                                if let Some(ref tx) = dual_mind_tx {
-                                    let _ = tx.send(DualMindUpdate {
-                                        enhancement: None,
-                                        review_output: Some(result.output.clone()),
-                                    });
-                                }
                                 result.output
                             }
                         } else {
                             result.output
-                        }
-                    } else {
-                        result.output
-                    };
+                        };
 
                     tool_results.push(Content::ToolResult {
                         tool_use_id: tool_call.id.clone(),

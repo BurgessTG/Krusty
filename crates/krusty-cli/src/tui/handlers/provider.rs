@@ -171,7 +171,8 @@ impl App {
     }
 
     /// Initialize dual-mind system when AI client is available
-    fn init_dual_mind(&mut self) {
+    /// Public because it's called when model changes in popup handlers
+    pub fn init_dual_mind(&mut self) {
         let Some(client) = self.create_ai_client() else {
             self.dual_mind = None;
             // DEBUG: Log initialization failure

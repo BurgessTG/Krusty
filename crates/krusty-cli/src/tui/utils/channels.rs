@@ -12,6 +12,7 @@ use crate::ai::types::Content;
 use crate::lsp::manager::MissingLspInfo;
 use crate::tools::ToolOutputChunk;
 use crate::tui::popups::lsp_browser::ZedApiExtension;
+use krusty_core::index::IndexProgress;
 
 /// AI-generated title update
 pub struct TitleUpdate {
@@ -118,6 +119,8 @@ pub struct AsyncChannels {
     pub init_exploration: Option<oneshot::Receiver<InitExplorationResult>>,
     /// /init exploration progress updates
     pub init_progress: Option<mpsc::UnboundedReceiver<AgentProgress>>,
+    /// /init indexing progress updates (file scanning/parsing before AI exploration)
+    pub indexing_progress: Option<mpsc::UnboundedReceiver<IndexProgress>>,
     /// Auto-updater status updates
     pub update_status: Option<mpsc::UnboundedReceiver<krusty_core::updater::UpdateStatus>>,
     /// OAuth authentication status updates

@@ -49,7 +49,10 @@ impl OpenAIParser {
             "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
                 if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
                     if !delta.is_empty() {
-                        tracing::debug!("Reasoning delta: {}...", &delta.chars().take(50).collect::<String>());
+                        tracing::debug!(
+                            "Reasoning delta: {}...",
+                            &delta.chars().take(50).collect::<String>()
+                        );
                         return SseEvent::ThinkingDelta {
                             index: 0,
                             thinking: delta.to_string(),

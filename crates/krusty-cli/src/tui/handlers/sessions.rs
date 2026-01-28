@@ -36,8 +36,7 @@ impl App {
                 self.session_title = Some(fallback_title);
 
                 // Clear any active plan when starting a new session
-                self.active_plan = None;
-                self.plan_sidebar.reset();
+                self.clear_plan();
 
                 // Spawn AI title generation in background
                 self.spawn_title_generation(id.clone(), first_message.to_string());
@@ -208,27 +207,19 @@ impl App {
                     completed,
                     total
                 );
-
-                self.active_plan = Some(plan);
-
-                // Auto-show sidebar when loading session with active plan
+                self.set_plan(plan);
                 if !self.plan_sidebar.visible {
                     self.plan_sidebar.toggle();
                 }
             }
             Ok(None) => {
                 tracing::debug!("No active plan found for session {}", session_id);
-                self.active_plan = None;
+                self.clear_plan();
             }
             Err(e) => {
                 tracing::warn!("Failed to find active plan: {}", e);
-                self.active_plan = None;
+                self.clear_plan();
             }
-        }
-
-        // Ensure sidebar state matches plan state
-        if self.active_plan.is_none() {
-            self.plan_sidebar.reset();
         }
 
         // Rebuild conversation from database
@@ -802,10 +793,7 @@ impl App {
         }
 
         // Find orphaned tool calls
-        let orphaned: Vec<String> = tool_use_ids
-            .difference(&tool_result_ids)
-            .cloned()
-            .collect();
+        let orphaned: Vec<String> = tool_use_ids.difference(&tool_result_ids).cloned().collect();
 
         if orphaned.is_empty() {
             return;

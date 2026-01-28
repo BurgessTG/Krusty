@@ -242,16 +242,6 @@ impl DualMind {
         result
     }
 
-    /// Continue discussion when there's disagreement
-    ///
-    /// Big Claw responds to Little Claw's concern.
-    pub async fn big_claw_responds(&mut self, response: &str) {
-        self.current_dialogue.push(DialogueTurn {
-            speaker: Speaker::BigClaw,
-            content: response.to_string(),
-        });
-    }
-
     /// Check if an action is trivial (not worth reviewing)
     fn is_trivial_action(&self, intent: &str) -> bool {
         if self.config.review_all {

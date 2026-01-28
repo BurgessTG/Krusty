@@ -1,7 +1,7 @@
 //! AI-powered conversation summarization for pinch
 //!
-//! Uses extended thinking when available (Anthropic) or falls back to
-//! simple API calls for other providers. Produces a structured summary
+//! Uses the user's current model by default. For Anthropic, enables
+//! extended thinking for deeper analysis. Produces a structured summary
 //! for the next session.
 
 use anyhow::Result;
@@ -11,9 +11,6 @@ use crate::ai::client::AiClient;
 use crate::ai::providers::ProviderId;
 use crate::ai::types::{Content, ModelMessage, Role};
 use crate::storage::RankedFile;
-
-/// Default Sonnet model for Anthropic summarization with extended thinking
-const ANTHROPIC_SUMMARIZATION_MODEL: &str = "claude-sonnet-4-5-20250929";
 
 /// Extended thinking budget for thorough analysis (Anthropic only)
 ///
@@ -261,10 +258,10 @@ fn summarize_tool_input(tool_name: &str, input: &serde_json::Value) -> String {
     }
 }
 
-/// Generate a summary using the appropriate method for the provider
+/// Generate a summary using the user's current model
 ///
-/// For Anthropic: Uses Sonnet 4.5 with extended thinking for deep analysis
-/// For other providers: Uses the current model with a simple call
+/// For Anthropic: Uses extended thinking for deep analysis
+/// For all providers: Uses the current model from the client
 pub async fn generate_summary(
     client: &AiClient,
     conversation: &[ModelMessage],
@@ -272,7 +269,7 @@ pub async fn generate_summary(
     ranked_files: &[RankedFile],
     file_contents: &[(String, String)],
     project_context: Option<&str>,
-    current_model: Option<&str>,
+    _current_model: Option<&str>, // Deprecated: model comes from client.config()
 ) -> Result<SummarizationResult> {
     let prompt = build_summarization_prompt(
         conversation,
@@ -288,24 +285,18 @@ pub async fn generate_summary(
         file_contents.len()
     );
 
+    // Use the client's configured model (user's current model)
+    let model = client.config().model.as_str();
     let provider = client.provider_id();
+
     let response = if provider == ProviderId::Anthropic {
         // Anthropic: Use extended thinking for deep analysis
-        tracing::info!(
-            "Using extended thinking with model {}",
-            ANTHROPIC_SUMMARIZATION_MODEL
-        );
+        tracing::info!("Using extended thinking with model {}", model);
         client
-            .call_with_thinking(
-                ANTHROPIC_SUMMARIZATION_MODEL,
-                SUMMARIZATION_SYSTEM_PROMPT,
-                &prompt,
-                THINKING_BUDGET,
-            )
+            .call_with_thinking(model, SUMMARIZATION_SYSTEM_PROMPT, &prompt, THINKING_BUDGET)
             .await?
     } else {
         // Other providers: Use simple call with current model
-        let model = current_model.unwrap_or_else(|| get_fallback_model(provider));
         tracing::info!(
             "Using simple call with model {} for provider {:?}",
             model,
@@ -323,19 +314,6 @@ pub async fn generate_summary(
 
     // Parse the JSON response
     parse_summary_response(&response)
-}
-
-/// Get a reasonable fallback model for summarization based on provider
-fn get_fallback_model(provider: ProviderId) -> &'static str {
-    match provider {
-        ProviderId::Anthropic => ANTHROPIC_SUMMARIZATION_MODEL,
-        ProviderId::OpenRouter => "anthropic/claude-3.5-haiku", // Fast and cheap on OpenRouter
-        ProviderId::OpenCodeZen => "minimax-m2.1-free",         // Free tier model
-        ProviderId::ZAi => "GLM-4.5-Air",                       // Fast GLM model
-        ProviderId::MiniMax => "MiniMax-M2.1",                  // MiniMax default
-        ProviderId::Kimi => "kimi-for-coding",                  // Kimi Code API model
-        ProviderId::OpenAI => "gpt-4o-mini",                    // Fast and cheap OpenAI model
-    }
 }
 
 /// Parse the JSON response from the summarization AI

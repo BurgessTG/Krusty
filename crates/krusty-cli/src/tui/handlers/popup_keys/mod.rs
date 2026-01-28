@@ -13,6 +13,7 @@ mod skills;
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
+use crate::ai::client::AiClient;
 use crate::tui::app::{App, Popup};
 
 impl App {
@@ -138,6 +139,15 @@ impl App {
                     }
                 }
                 self.current_model = model_id.clone();
+
+                // Reinitialize AI client and dual-mind with new model
+                if self.api_key.is_some() {
+                    let config = self.create_client_config();
+                    if let Some(key) = &self.api_key {
+                        self.ai_client = Some(AiClient::with_api_key(config, key.clone()));
+                    }
+                    self.init_dual_mind();
+                }
 
                 // Mark model as recently used
                 let registry = self.services.model_registry.clone();

@@ -655,9 +655,7 @@ impl App {
                                 format!("Plan '{}' abandoned.", title),
                             ));
                         }
-                        self.active_plan = None;
-                        self.plan_sidebar.reset();
-                        self.ui.work_mode = crate::tui::app::WorkMode::Build;
+                        self.clear_plan();
                         // Don't continue AI conversation - user abandoned
                     }
                     _ => {}

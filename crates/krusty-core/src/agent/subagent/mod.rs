@@ -1,8 +1,12 @@
 //! Sub-agent system for parallel task execution
 //!
-//! Enables spawning lightweight agents (e.g., Haiku) to explore the codebase.
+//! Enables spawning lightweight agents to explore the codebase.
 //! Sub-agents have read-only access: glob, grep, read.
 //! They cannot modify files or execute arbitrary commands.
+//!
+//! ## Provider-Agnostic Design
+//! Sub-agents use the user's current model by default. Set override_model
+//! when creating SubAgentPool to use the same model as the main agent.
 //!
 //! ## Module Structure
 //! - `types`: Core data types (progress, models, tasks, results)
@@ -22,17 +26,19 @@ use tracing::{debug, info, warn};
 /// Timeout for acquiring semaphore permit (prevents deadlock on hung agents)
 const SEMAPHORE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Default stagger delay between spawning agents (prevents rate limit storms)
+/// Same for all providers - users can override with with_stagger_delay() if needed
+const DEFAULT_STAGGER_MS: u64 = 100;
+
 use crate::agent::build_context::SharedBuildContext;
 use crate::agent::cache::SharedExploreCache;
 use crate::agent::AgentCancellation;
 use crate::ai::client::AiClient;
-use crate::ai::providers::ProviderId;
 
 // Re-export public types
 pub use tools::BuilderTools;
 pub use types::{
-    AgentProgress, AgentProgressStatus, SubAgentApiError, SubAgentModel, SubAgentResult,
-    SubAgentTask,
+    AgentProgress, AgentProgressStatus, SubAgentApiError, SubAgentResult, SubAgentTask,
 };
 
 // Internal execution functions
@@ -56,21 +62,13 @@ impl SubAgentPool {
     pub fn new(client: Arc<AiClient>, cancellation: AgentCancellation) -> Self {
         use crate::agent::constants::concurrency;
 
-        // Provider-specific stagger delays to respect rate limits
-        // Anthropic has high limits, others need more spacing
-        let stagger_delay = match client.provider_id() {
-            ProviderId::Anthropic => Duration::from_millis(50), // High limits
-            ProviderId::OpenRouter => Duration::from_millis(100), // Reasonable limits
-            _ => Duration::from_millis(200), // Conservative for Z.ai, MiniMax, Kimi, etc.
-        };
-
         Self {
             client,
             cancellation,
             max_concurrency: concurrency::MAX_PARALLEL_TOOLS,
             cache: Arc::new(SharedExploreCache::new()),
             override_model: None,
-            stagger_delay,
+            stagger_delay: Duration::from_millis(DEFAULT_STAGGER_MS),
         }
     }
 
@@ -79,8 +77,10 @@ impl SubAgentPool {
         self
     }
 
-    /// Set an override model for non-Anthropic providers
-    /// When set and provider isn't Anthropic, subagents use this model instead of SubAgentModel
+    /// Set the model for sub-agent tasks
+    ///
+    /// This should be set to the user's current model for provider-agnostic behavior.
+    /// If not set, falls back to the client's configured model.
     pub fn with_override_model(mut self, model: Option<String>) -> Self {
         self.override_model = model;
         self
@@ -92,19 +92,15 @@ impl SubAgentPool {
         self
     }
 
-    /// Resolve which model to use for a task
-    /// - Anthropic provider: use the task's specialized model (Haiku for explore, Opus for build)
-    /// - Other providers: use the override model (user's selected model)
-    fn resolve_model(&self, task: &SubAgentTask) -> String {
-        if self.client.provider_id() == ProviderId::Anthropic {
-            // Anthropic: use specialized subagent models
-            task.model.model_id().to_string()
-        } else {
-            // Non-Anthropic: use the user's selected model (or fall back to task model)
-            self.override_model
-                .clone()
-                .unwrap_or_else(|| task.model.model_id().to_string())
-        }
+    /// Get the model to use for sub-agent tasks
+    ///
+    /// Returns the override_model (user's current model). This must be set
+    /// when creating the SubAgentPool via `with_override_model()`.
+    /// Falls back to the client's configured model if not set.
+    fn resolve_model(&self) -> String {
+        self.override_model
+            .clone()
+            .unwrap_or_else(|| self.client.config().model.clone())
     }
 
     /// Execute multiple sub-agent tasks concurrently with staggered spawning
@@ -140,7 +136,7 @@ impl SubAgentPool {
             let cancel = cancellation.child_token();
             let cache = cache.clone();
             let task_id = task.id.clone();
-            let resolved_model = self.resolve_model(&task);
+            let resolved_model = self.resolve_model();
 
             let handle = tokio::spawn(async move {
                 debug!(task_id = %task_id, "SubAgent: Acquiring semaphore permit");
@@ -266,7 +262,7 @@ impl SubAgentPool {
             let cache = cache.clone();
             let task_id = task.id.clone();
             let progress_tx = progress_tx.clone();
-            let resolved_model = self.resolve_model(&task);
+            let resolved_model = self.resolve_model();
 
             let handle = tokio::spawn(async move {
                 let _permit = match timeout(SEMAPHORE_TIMEOUT, sem.acquire()).await {
@@ -386,7 +382,7 @@ impl SubAgentPool {
             let context = context.clone();
             let task_id = task.id.clone();
             let progress_tx = progress_tx.clone();
-            let resolved_model = self.resolve_model(&task);
+            let resolved_model = self.resolve_model();
 
             let handle = tokio::spawn(async move {
                 let _permit = match timeout(SEMAPHORE_TIMEOUT, sem.acquire()).await {

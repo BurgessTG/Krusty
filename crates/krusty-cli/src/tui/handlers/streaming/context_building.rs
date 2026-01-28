@@ -7,6 +7,7 @@
 //! - Project instructions
 
 use crate::tui::app::{App, WorkMode};
+use krusty_core::index::{CodebaseStore, InsightStore};
 
 /// Sanitize plan titles for safe markdown embedding
 /// Escapes backticks and quotes that could break formatting
@@ -253,6 +254,38 @@ You MUST follow this disciplined workflow. Do NOT batch-complete tasks or skip s
         }
 
         context.push_str("\nTo use a skill: `skill(skill: \"skill-name\")`\n");
+        context
+    }
+
+    /// Build insights context from accumulated codebase learnings
+    pub fn build_insights_context(&self) -> String {
+        let Some(ref sm) = self.services.session_manager else {
+            return String::new();
+        };
+
+        let conn = sm.db().conn();
+        let working_dir_str = self.working_dir.to_string_lossy().to_string();
+
+        let codebase_id = match CodebaseStore::new(conn).get_by_path(&working_dir_str) {
+            Ok(Some(codebase)) => codebase.id,
+            _ => return String::new(),
+        };
+
+        let insight_store = InsightStore::new(conn);
+        let insights = match insight_store.get_top(&codebase_id, 20) {
+            Ok(insights) if !insights.is_empty() => insights,
+            _ => return String::new(),
+        };
+
+        let mut context = String::from("[CODEBASE INSIGHTS]\n\n");
+        for insight in &insights {
+            context.push_str(&format!(
+                "- [{}] {} (confidence: {:.0}%)\n",
+                insight.insight_type.as_str(),
+                insight.content,
+                insight.confidence * 100.0
+            ));
+        }
         context
     }
 

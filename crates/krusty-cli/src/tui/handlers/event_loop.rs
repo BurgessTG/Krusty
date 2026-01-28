@@ -126,7 +126,7 @@ impl App {
         let plugin_window = self.plugin_window.tick();
 
         if self.plan_sidebar.should_clear_plan() {
-            self.active_plan = None;
+            self.clear_plan();
             tracing::info!("Plan cleared after sidebar collapse");
         }
 

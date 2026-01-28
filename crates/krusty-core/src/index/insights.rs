@@ -184,7 +184,7 @@ impl<'a> InsightStore<'a> {
 
         let mut stmt = self
             .conn
-            .prepare("SELECT content FROM codebase_insights WHERE codebase_id = ?1")?;
+            .prepare("SELECT content FROM codebase_insights WHERE codebase_id = ?1 LIMIT 100")?;
 
         let rows = stmt.query_map([codebase_id], |row| row.get::<_, String>(0))?;
 
@@ -199,41 +199,6 @@ impl<'a> InsightStore<'a> {
         }
 
         Ok(false)
-    }
-
-    /// Increment access count and update last_accessed_at
-    pub fn record_access(&self, insight_id: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE codebase_insights SET access_count = access_count + 1, last_accessed_at = ?1 WHERE id = ?2",
-            params![now, insight_id],
-        )?;
-        Ok(())
-    }
-
-    /// Update confidence score
-    pub fn update_confidence(&self, insight_id: &str, confidence: f64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE codebase_insights SET confidence = ?1 WHERE id = ?2",
-            params![confidence, insight_id],
-        )?;
-        Ok(())
-    }
-
-    /// Delete an insight
-    pub fn delete(&self, insight_id: &str) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM codebase_insights WHERE id = ?1", [insight_id])?;
-        Ok(())
-    }
-
-    /// Delete low-confidence insights for cleanup
-    pub fn prune_low_confidence(&self, codebase_id: &str, min_confidence: f64) -> Result<usize> {
-        let deleted = self.conn.execute(
-            "DELETE FROM codebase_insights WHERE codebase_id = ?1 AND confidence < ?2 AND access_count < 3",
-            params![codebase_id, min_confidence],
-        )?;
-        Ok(deleted)
     }
 
     fn query_insights<P: rusqlite::Params>(

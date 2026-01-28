@@ -66,7 +66,112 @@ impl Indexer {
         Ok(self)
     }
 
-    /// Index a codebase with progress reporting
+    /// Index a codebase synchronously (no embeddings)
+    ///
+    /// Use this when embeddings are disabled to avoid async runtime issues.
+    pub fn index_codebase_sync(
+        &mut self,
+        conn: &Connection,
+        path: &Path,
+        progress_tx: Option<mpsc::UnboundedSender<IndexProgress>>,
+    ) -> Result<Codebase> {
+        if self.embeddings.is_some() {
+            anyhow::bail!("index_codebase_sync cannot be used with embeddings enabled");
+        }
+
+        let send_progress = |progress: IndexProgress| {
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.send(progress);
+            }
+        };
+
+        let store = CodebaseStore::new(conn);
+        let codebase = store.get_or_create(path)?;
+        info!(codebase_id = %codebase.id, path = %codebase.path, "Starting sync index");
+
+        send_progress(IndexProgress {
+            phase: IndexPhase::Scanning,
+            current: 0,
+            total: 0,
+            current_file: None,
+        });
+
+        let rust_files = self.scan_rust_files(path)?;
+        let total_files = rust_files.len();
+        info!(files = total_files, "Found Rust files to index");
+
+        if total_files == 0 {
+            send_progress(IndexProgress {
+                phase: IndexPhase::Complete,
+                current: 0,
+                total: 0,
+                current_file: None,
+            });
+            return Ok(codebase);
+        }
+
+        let mut all_symbols: Vec<(PathBuf, ParsedSymbol)> = Vec::new();
+        for (idx, file_path) in rust_files.iter().enumerate() {
+            send_progress(IndexProgress {
+                phase: IndexPhase::Parsing,
+                current: idx + 1,
+                total: total_files,
+                current_file: Some(file_path.display().to_string()),
+            });
+
+            match self.parse_file(file_path) {
+                Ok(symbols) => {
+                    for symbol in symbols {
+                        all_symbols.push((file_path.clone(), symbol));
+                    }
+                }
+                Err(e) => {
+                    warn!(file = %file_path.display(), error = %e, "Failed to parse file");
+                }
+            }
+        }
+
+        let total_symbols = all_symbols.len();
+        info!(symbols = total_symbols, "Extracted symbols");
+
+        send_progress(IndexProgress {
+            phase: IndexPhase::Storing,
+            current: 0,
+            total: total_symbols,
+            current_file: None,
+        });
+
+        store.clear_index(&codebase.id)?;
+        let now = Utc::now().to_rfc3339();
+
+        for (idx, (file_path, symbol)) in all_symbols.into_iter().enumerate() {
+            if idx % 100 == 0 {
+                send_progress(IndexProgress {
+                    phase: IndexPhase::Storing,
+                    current: idx,
+                    total: total_symbols,
+                    current_file: None,
+                });
+            }
+            self.insert_symbol(conn, &codebase.id, &file_path, &symbol, None, &now)?;
+        }
+
+        store.mark_indexed(&codebase.id, INDEX_VERSION)?;
+
+        send_progress(IndexProgress {
+            phase: IndexPhase::Complete,
+            current: total_symbols,
+            total: total_symbols,
+            current_file: None,
+        });
+
+        info!(codebase_id = %codebase.id, symbols = total_symbols, "Sync indexing complete");
+        store
+            .get_by_id(&codebase.id)?
+            .context("Codebase not found after indexing")
+    }
+
+    /// Index a codebase with progress reporting (async, supports embeddings)
     pub async fn index_codebase(
         &mut self,
         conn: &Connection,

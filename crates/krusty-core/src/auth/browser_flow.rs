@@ -396,10 +396,15 @@ fn html_escape(s: &str) -> String {
 
 /// Open a URL in the default browser
 pub fn open_browser(url: &str) -> Result<()> {
+    use std::process::Stdio;
+
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
             .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .context("Failed to open browser with xdg-open")?;
     }
@@ -408,6 +413,9 @@ pub fn open_browser(url: &str) -> Result<()> {
     {
         std::process::Command::new("open")
             .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .context("Failed to open browser with open")?;
     }
@@ -416,6 +424,9 @@ pub fn open_browser(url: &str) -> Result<()> {
     {
         std::process::Command::new("cmd")
             .args(["/C", "start", "", url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .context("Failed to open browser")?;
     }

@@ -132,7 +132,8 @@ impl AgentConfig for ExplorerConfig {
     }
 
     fn max_tokens(&self) -> usize {
-        self.task.model.max_tokens()
+        // High limit - let the model stop naturally when done
+        16384
     }
 
     fn get_ai_tools(&self) -> Vec<AiTool> {
@@ -187,7 +188,8 @@ impl AgentConfig for BuilderConfig {
     }
 
     fn max_tokens(&self) -> usize {
-        self.task.model.max_tokens()
+        // High limit - let the model stop naturally when done
+        16384
     }
 
     fn get_ai_tools(&self) -> Vec<AiTool> {

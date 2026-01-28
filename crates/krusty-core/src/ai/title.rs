@@ -1,22 +1,8 @@
 //! AI-powered session title generation
 //!
-//! Uses a fast/cheap model for concise title generation.
+//! Uses the user's current model for provider-agnostic title generation.
 
 use super::client::AiClient;
-use super::providers::ProviderId;
-
-/// Get the fast/cheap model ID for title generation based on provider
-fn get_title_model(provider: ProviderId) -> &'static str {
-    match provider {
-        ProviderId::Anthropic => "claude-haiku-4-5-20251001",
-        ProviderId::OpenRouter => "anthropic/claude-3.5-haiku",
-        ProviderId::OpenCodeZen => "minimax-m2.1-free", // Free model that works
-        ProviderId::ZAi => "GLM-4.5-Air",
-        ProviderId::MiniMax => "MiniMax-M2.1",
-        ProviderId::Kimi => "kimi-for-coding", // Kimi Code API model
-        ProviderId::OpenAI => "gpt-4o-mini",   // Fast and cheap OpenAI model
-    }
-}
 
 /// System prompt for title generation - designed for zero filler
 const TITLE_SYSTEM_PROMPT: &str = "\
@@ -31,19 +17,16 @@ Rules:
 
 /// Generate a session title from the first user message
 ///
-/// Uses a fast/cheap model for title generation.
+/// Uses the user's current model by default. The client's configured model
+/// is used directly, providing a provider-agnostic experience.
 /// Falls back to truncation if API call fails.
 pub async fn generate_title(client: &AiClient, first_message: &str) -> String {
     // Truncate input to avoid wasting tokens on very long messages
     let truncated: String = first_message.chars().take(500).collect();
 
-    // Get the right model for this provider
-    // For ChatGPT Codex, we must use the conversation model (gpt-4o-mini isn't supported)
-    let model = if client.config().uses_chatgpt_codex_format() {
-        client.config().model.as_str()
-    } else {
-        get_title_model(client.provider_id())
-    };
+    // Use the client's configured model (user's current model)
+    // This provides a consistent experience across all providers
+    let model = client.config().model.as_str();
 
     match client
         .call_simple(model, TITLE_SYSTEM_PROMPT, &truncated, 30)
@@ -105,13 +88,8 @@ pub async fn generate_pinch_title(
     // Truncate to avoid token waste
     let truncated: String = context.chars().take(800).collect();
 
-    // Get the right model for this provider
-    // For ChatGPT Codex, we must use the conversation model
-    let model = if client.config().uses_chatgpt_codex_format() {
-        client.config().model.as_str()
-    } else {
-        get_title_model(client.provider_id())
-    };
+    // Use the client's configured model (user's current model)
+    let model = client.config().model.as_str();
 
     match client
         .call_simple(model, PINCH_TITLE_PROMPT, &truncated, 30)

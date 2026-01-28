@@ -16,7 +16,6 @@ use crate::ai::client::core::KRUSTY_SYSTEM_PROMPT;
 use crate::ai::client::AiClient;
 use crate::ai::streaming::StreamPart;
 use crate::ai::types::{AiTool, AiToolCall, Content, ModelMessage, Role};
-use crate::index::insights::{create_insight, InsightStore};
 use crate::tools::{ToolContext, ToolRegistry, ToolResult as ToolExecResult};
 
 /// Maximum agentic turns for Little Claw (prevent runaway research)
@@ -228,7 +227,11 @@ impl LittleClaw {
             use std::io::Write;
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
             let _ = writeln!(file, "\n[{}] === POST-REVIEW ===", timestamp);
-            let _ = writeln!(file, "[BIG CLAW OUTPUT]: {}...", &output.chars().take(500).collect::<String>());
+            let _ = writeln!(
+                file,
+                "[BIG CLAW OUTPUT]: {}...",
+                &output.chars().take(500).collect::<String>()
+            );
         }
 
         // Truncate very long output
@@ -355,6 +358,9 @@ impl LittleClaw {
                 let _ = writeln!(file, "[LITTLE CLAW RESPONSE]: {}", response);
                 let _ = writeln!(file, "---");
             }
+
+            // Prune messages if history is too long
+            self.prune_messages().await;
 
             // Determine result type based on response content
             return self.classify_response(&response, turn);
@@ -589,6 +595,21 @@ impl LittleClaw {
         }
     }
 
+    /// Prune message history to prevent unbounded growth
+    async fn prune_messages(&self) {
+        let mut messages = self.messages.write().await;
+        if messages.len() > 50 {
+            let keep_from = messages.len() - 40;
+            let first = messages.remove(0); // system prompt
+            messages.drain(..keep_from - 1);
+            messages.insert(0, first);
+            debug!(
+                new_len = messages.len(),
+                "Pruned Little Claw message history"
+            );
+        }
+    }
+
     /// Get the current message count
     pub async fn message_count(&self) -> usize {
         self.messages.read().await.len()
@@ -603,62 +624,6 @@ impl LittleClaw {
     pub async fn clear(&self) {
         self.messages.write().await.clear();
         *self.observation_cursor.write().await = 0;
-    }
-
-    /// Extract insights from review output and save to database
-    ///
-    /// This runs silently after post-review completes, extracting generalizable
-    /// learnings about the codebase without interrupting the user.
-    pub fn extract_insights(
-        review_output: &str,
-        codebase_id: &str,
-        session_id: &str,
-        insight_store: &InsightStore<'_>,
-    ) -> Vec<String> {
-        let mut saved_insights = Vec::new();
-
-        // Skip trivial responses that don't contain insights
-        if is_trivial_response(review_output) {
-            debug!("Skipping trivial response for insight extraction");
-            return saved_insights;
-        }
-
-        // Look for insight patterns in the review
-        let insights = extract_insight_patterns(review_output);
-
-        for insight_content in insights {
-            // Check for duplicates
-            match insight_store.has_similar(codebase_id, &insight_content) {
-                Ok(true) => {
-                    debug!(content = %insight_content, "Skipping duplicate insight");
-                    continue;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(error = %e, "Failed to check for duplicate insight");
-                    continue;
-                }
-            }
-
-            // Create and save the insight
-            let insight = create_insight(codebase_id, &insight_content, Some(session_id), 0.6);
-
-            match insight_store.create(&insight) {
-                Ok(_) => {
-                    info!(
-                        insight_id = %insight.id,
-                        insight_type = ?insight.insight_type,
-                        "Saved new codebase insight"
-                    );
-                    saved_insights.push(insight.content);
-                }
-                Err(e) => {
-                    warn!(error = %e, "Failed to save insight");
-                }
-            }
-        }
-
-        saved_insights
     }
 }
 

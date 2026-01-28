@@ -1,6 +1,4 @@
-# Krusty
-
-Terminal-based AI coding assistant with multi-provider AI support and Zed's WASM extension system.
+# krusty-public
 
 ## Tech Stack
 
@@ -8,145 +6,200 @@ Terminal-based AI coding assistant with multi-provider AI support and Zed's WASM
 
 ## Architecture
 
----
+## Main Modules/Crates
 
-## CRATES
+### krusty-core (Core Library)
+- **acp**: Agent Client Protocol server - JSON-RPC 2.0 interface for editor integration (Zed, Neovim, JetBrains)
+- **agent**: Agent system with event bus, hooks, subagents, and Dual-Mind architecture (Big Claw/Little Claw)
+- **ai**: Multi-provider AI layer supporting Anthropic, OpenRouter, OpenCodeZen, Google with format detection
+- **auth**: OAuth/PKCE/device flow authentication for API providers
+- **extensions**: Zed-compatible WASM extension system with runtime, manifest, and GitHub integration
+- **index**: Smart codebase memory with tree-sitter parsing, local embeddings (fastembed), and semantic retrieval
+- **lsp**: Language Server Protocol manager - spawns/manages multiple LSP servers per project
+- **mcp**: Model Context Protocol client for local (stdio) and remote (URL) MCP servers
+- **plan**: Plan management with SQLite-backed storage, phase/task tracking
+- **process**: Process registry for tracking and managing spawned processes
+- **skills**: Skills manager for global and project-specific skill loading (SKILL.md format)
+- **storage**: SQLite persistence for sessions, plans, preferences, credentials, file activity
+- **tools**: Tool registry with trait-based implementations, hooks, and sandbox enforcement
 
-**krusty-core**: Shared library containing AI, storage, tools, LSP, extensions, and agent systems
+### krusty-cli (TUI Application)
+- **tui**: Terminal UI built with ratatui - blocks (read, write, bash, explore), components, handlers, plugins
+- **plugins**: Retro game plugins (brick_breaker, pew_pew, libretro, gamepad) - easter eggs for the CLI
 
-**krusty-cli**: Terminal UI application with ratatui-based chat interface, Zed extension management, and theming system
+## Key Design Patterns
 
----
+1. **Dual-Mind Architecture (Big Claw/Little Claw)**: Two independent agent instances collaborate - Big Claw executes, Little Claw reviews/validates, dialogue appears in thinking blocks
 
-## KEY MODULES IN KRUSTY-CORE
+2. **Trait-based Plugin System**: `Tool` trait with async_trait for extensibility; `PreToolHook`/`PostToolHook` hooks for logging, safety, validation
 
-- **agent**: Event bus, state tracking, hooks system, sub-agents, build context coordination (Octopod swarm)
-- **ai**: Multi-provider AI client with streaming, SSE parsing, title generation, OpenRouter support
-- **auth**: (deprecated - API keys now stored in storage/credentials)
-- **extensions**: Zed-compatible WASM extension host (wasmtime), manifest parsing, GitHub integration
-- **lsp**: Language server protocol client with JSON-RPC transport, diagnostics, and downloader for Zed extensions
-- **tools**: Tool registry with pre/post-execution hooks, implementations (read, write, edit, bash, grep, glob, processes, explore, build, skills, ask_user)
-- **skills**: Modular filesystem-based resources with YAML frontmatter for domain-specific instructions
-- **storage**: SQLite persistence for sessions, plans, preferences, credentials, file activity tracking
-- **plan**: Plan management with session linkage and task tracking
-- **process**: Background process registry with status tracking
-- **paths**: Configuration directory resolution
+3. **Registry Pattern**: ToolRegistry, LspManager, SkillsManager, McpManager provide centralized lookup/management
 
----
+4. **Event Bus Architecture**: AgentEventBus for centralized event dispatching across the agent system
 
-## DESIGN PATTERNS USED
+5. **Strategy Pattern**: Multiple AI provider implementations (Anthropic, OpenRouter, OpenCodeZen) via AiClientConfig
 
-1. **Trait-based Architecture** - Async traits (`#[async_trait]`) for extensibility: `PreToolHook`, `PostToolHook`, `Tool`, `WorktreeDelegate`, `SseParser`
+6. **Repository Pattern**: PlanStore, SessionManager, CredentialStore abstract SQLite operations
 
-2. **Hook Pattern** - Pre/post execution hooks for logging, validation, and safety interception on all tools
+7. **Builder Swarm (Octopod)**: SharedBuildContext coordinates multiple builder agents with type registry and file locks
 
-3. **Registry Pattern** - `ToolRegistry`, `SkillsManager`, theme/extension registries for plugin-like extensibility
+8. **ACP Bridge**: JSON-RPC 2.0 over stdio for editor integration; KrustyAgent handles session/prompt/update requests
 
-4. **Event Bus Pattern** - `AgentEventBus` for centralized event dispatch and logging
+9. **WASM Extension Host**: Zed-compatible extensions loaded via wasmtime with command/manifest support
 
-5. **Builder Swarm (Octopod)** - `SharedBuildContext` coordinates concurrent Opus agents with file locks, conventions, and diff tracking
-
-6. **Sub-agent Pool** - Lightweight parallel agents for codebase exploration with limited tool access
-
-7. **Cache Pattern** - `SharedExploreCache` and moka caches for expensive operations
-
-8. **Streaming/SSE** - Server-sent events parsing with accumulators for thinking, tool calls, and tokens
-
-9. **Shared State Pattern** - Arc/RwLock/DashMap for thread-safe concurrent state in process registry, credentials, models
-
-10. **Context Object Pattern** - `ToolContext` passed through tool execution with optional channels for streaming output, progress updates
-
-11. **Configuration Loading** - Multi-source config (API keys, preferences) with fallbacks
-
-12. **Middleware/Pipeline** - Axum tower-http for CORS, tracing, routing in server
-
-13. **WASM Component Model** - Zed-compatible extension loading via wasmtime with component WIT interfaces
-
-14. **Pinch Context Pattern** - Session continuation state for resuming conversations with summarization
-
-15. **CLI Subcommand Pattern** - Clap derive for modular commands (chat, lsp, auth, themes)
+10. **Builder Pattern**: DualMindBuilder, AppBuilder for fluent configuration
 
 ## Key Files
 
-- `crates/krusty-cli/src/main.rs` - CLI entry point with chat, theme, LSP, and authentication subcommands
-- `crates/krusty-cli/src/tui/app.rs` - Terminal UI application logic and state management
-- `crates/krusty-core/src/lib.rs` - Core library exposing agent, AI, auth, storage, tools, extensions modules
-- `crates/krusty-core/src/tools/registry.rs` - Tool registry managing execution, hooks, timeouts, and context
-- `crates/krusty-core/src/agent/mod.rs` - Agent system with event bus, state tracking, hooks, and sub-agents
-- `crates/krusty-core/src/ai/client/core.rs` - AI API client with streaming and tool execution
-- `crates/krusty-core/src/storage/database.rs` - SQLite database wrapper with versioned migrations and schema management
-- `crates/krusty-core/src/extensions/mod.rs` - Zed-compatible WASM extension system for language servers
-- `crates/krusty-core/src/lsp/manager.rs` - LSP manager coordinating multiple language servers and diagnostics
-- `crates/krusty-core/src/skills/manager.rs` - Skills manager for discovery and loading of global and project skills
-- `crates/krusty-core/src/storage/sessions.rs` - Session CRUD operations with database persistence
-- `crates/krusty-core/src/plan/manager.rs` - Plan manager with SQLite-backed storage and session linkage
+- `crates/krusty-core/src/lib.rs` - Core library exports for AI, storage, tools, LSP/MCP, and agent systems
+- `crates/krusty-cli/src/tui/app.rs` - Main TUI application with event loop, state management, and terminal rendering
+- `crates/krusty-core/src/agent/mod.rs` - Agent system with event bus, hooks, sub-agents, and dual-mind quality control
+- `crates/krusty-core/src/ai/mod.rs` - AI provider layer supporting Anthropic, OpenRouter, OpenCodeZen, and other providers
+- `crates/krusty-core/src/index/indexer.rs` - Codebase indexer with Rust symbol parsing and semantic embeddings
+- `crates/krusty-core/src/tools/registry.rs` - Tool registry managing file, bash, explore, and build tools with sandbox support
+- `crates/krusty-core/src/storage/database.rs` - SQLite database wrapper with versioned migrations for sessions, plans, and codebases
+- `crates/krusty-core/src/plan/manager.rs` - Plan manager with SQLite-backed 1:1 session-plan linkage
+- `crates/krusty-core/src/mcp/manager.rs` - MCP server manager for local stdio connections and remote server support
+- `Cargo.toml` - Workspace configuration defining crates, release profile, and lint rules
 
 ## Conventions
 
-**Error Handling: anyhow**
-- Primary: `anyhow::Result` and `anyhow::anyhow!()` for most functions
-- Secondary: `thiserror` in dependencies (2.0) for structured errors
+## Findings
 
-**Logging: tracing**
-- Uses `tracing` crate (0.1) exclusively, no `log` or `println`
-- Levels: `tracing::info!()`, `tracing::warn!()`, `tracing::debug!()`
-- Setup: `tracing_subscriber` with env-filter in main.rs
-- Exception: User-facing CLI output uses `println!()` and `eprintln!()` (not logging)
+### Error Handling
+- **anyhow** = "1.0" - Primary error handling crate
+- **thiserror** = "2.0" - For defining custom error types
+- Pattern: `anyhow::Result<T>`, `anyhow::bail!()`, `anyhow::anyhow!()`, `.context()`
+- Custom errors via thiserror derive (e.g., `AcpError`)
 
-**Async: tokio**
-- Runtime: `tokio` 1.40 with "full" features across all crates
-- Entry: `#[tokio::main]` attribute on main functions
-- Traits: `#[async_trait]` from async-trait crate for trait methods
+### Logging
+- **tracing** = "0.1" - Structured logging framework
+- **tracing-subscriber** - With env-filter for filtering
+- Macros: `info!`, `debug!`, `warn!`, `error!`
+- Structured fields: `info!(key = %value, "message")`
 
-**Testing: Inline with #[cfg(test)]**
-- Location: `#[cfg(test)] mod tests { }` blocks at end of source files
-- Framework: Standard Rust test framework (`#[test]` attribute)
-- Dependencies: `tempfile` in dev-dependencies for temporary directory tests
+### Async
+- **tokio** = "1.40" with "full" feature - Async runtime
+- **async-trait** = "0.1" - For async trait methods
+- Tokiosync primitives: `Mutex`, `RwLock`, `mpsc`, `oneshot`
+- `tokio::select!`, `tokio::time::timeout`, `tokio::spawn`
+- `#[tokio::main]` entry point
 
-**Naming Conventions:**
-- Module naming: lowercase snake_case (`tools`, `extensions`, `lsp`)
-- Struct naming: PascalCase (`SkillsManager`, `PlanManager`, `ToolRegistry`, `AiClient`)
-- Function naming: snake_case (`parse_frontmatter`, `build_tree`, `create_session`)
-- Enum naming: PascalCase variants (`SkillSource::Global`)
-- Tool implementation files: Named after tool function (bash.rs, read.rs, write.rs, glob.rs, grep.rs, explore.rs, edit.rs)
+### Testing
+- Location: Inline `#[cfg(test)]` modules with `mod tests { ... }`
+- Framework: Standard Rust `#[test]` + `#[tokio::test]`
+- No external test framework (using std lib)
+- Dev dependency: `tempfile` for tests
+
+### Naming Conventions
+- **Constants**: `SCREAMING_SNAKE_CASE`, organized in dedicated `constants.rs` files
+- **Constant modules**: `token_limits::SMALL`, `timeouts::TOOL_EXECUTION`, `models::OPUS_4_5`
+- **Structs**: `PascalCase`, `pub struct` with public fields
+- **Functions**: `snake_case`
+- **Private fields**: Prefixed with underscore `_field`
+- **Modules**: `snake_case`
+- **Enums**: `PascalCase`
+- **Tests**: `mod tests` with `#[test]`/`#[tokio::test]` functions
+
+### Files Examined
+- `/home/burgess/Work/Krusty-Dev/krusty-public/Cargo.toml`
+- `/home/burgess/Work/Krusty-Dev/krusty-public/crates/krusty-core/Cargo.toml`
+- `/home/burgess/Work/Krusty-Dev/krusty-public/crates/krusty-cli/Cargo.toml`
+- `/home/burgess/Work/Krusty-Dev/krusty-public/crates/krusty-core/src/lib.rs`
+- `/home/burgess/Work/Krusty-Dev/krusty-public/crates/krusty-core/src/agent/mod.rs`
+- `/home/burgess/Work/Krusty-Dev/krusty-public/crates/krusty-core/src/agent/constants.rs`
+- Multiple source files examined via grep for patterns
 
 ## Build & Run
 
+## Build Commands
+
 ```bash
-cargo check                          # Quick compilation check
-cargo build                          # Debug build
-cargo build --release                # Release build (LTO enabled)
-cargo run                            # Run TUI
-cargo run -- lsp list                # List installed extensions
-cargo run -- lsp install <name>      # Install Zed extension
-cargo run -- lsp remove <name>       # Remove extension
-cargo run -- lsp status              # Show extension details
-cargo run -- themes                  # List available themes
-cargo run -- -t <theme>              # Run with specific theme
-cargo clippy                         # Lint check (zero warnings required)
-cargo test                           # Run tests
+cargo build                   # Debug build
+cargo build --release         # Release build
+cargo check                   # Type check
+cargo test                    # Run tests
+cargo clippy                  # Lint
+cargo clippy --workspace -- -D warnings  # Lint all with strict mode
+cargo fmt --all               # Format code
+cargo build --workspace       # Build all workspace crates
+cargo test --workspace        # Test all workspace crates
+krusty acp                    # Editor integration via ACP
+krusty lsp install <lang>     # Install language server
 ```
 
 ## Key Dependencies
 
-- tokio (async runtime)
-- reqwest (HTTP client)
-- ratatui (TUI framework)
-- crossterm (terminal control)
-- portable-pty (PTY/terminal emulation)
-- vt100 (terminal parsing)
-- rusqlite (SQLite database)
-- wasmtime, wasmtime-wasi (WASM runtime for extensions)
-- lsp-types (LSP support)
-- git2 (version control)
-- image (image processing)
-- serde, serde_json, toml, serde_yaml (serialization)
-- tracing (logging)
-- anyhow, thiserror (error handling)
-- clap (CLI argument parsing)
-- uuid, chrono, regex, glob, walkdir (utilities)
-- flate2, tar, zip, xz2 (archive handling)
-- dashmap, parking_lot, moka (concurrency)
-- ignore (file system)
-- syntect (syntax highlighting)
+**Runtime/Async**
+- tokio
+
+**Error Handling**
+- anyhow, thiserror
+
+**Serialization**
+- serde, serde_json, toml, serde_yaml
+
+**Logging**
+- tracing, tracing-subscriber
+
+**HTTP**
+- reqwest
+
+**TUI**
+- ratatui, ratatui-image, crossterm, unicode-width, textwrap, arboard, image, palette
+
+**PTY/Terminal**
+- vt100, portable-pty
+
+**Database**
+- rusqlite
+
+**LSP**
+- lsp-types
+
+**WASM Extensions**
+- wasmtime, wasmtime-wasi, wasmparser, semver
+
+**Auth**
+- sha2, hmac, base64, rand
+
+**URL/Web**
+- url, webbrowser, tiny_http, httpdate
+
+**Web Content**
+- html2md, scraper
+
+**Utilities**
+- which, chrono, uuid, regex, glob, walkdir, similar, shell-words
+
+**Archives**
+- flate2, tar, zip, xz2
+
+**Concurrency**
+- dashmap, parking_lot, moka
+
+**System**
+- libc, libloading
+
+**Code Parsing**
+- tree-sitter, tree-sitter-rust
+
+**Embeddings**
+- fastembed
+
+**ACP Protocol**
+- agent-client-protocol
+
+**Version Control**
+- git2
+
+**Syntax Highlighting**
+- syntect
+
+**File System**
+- ignore
+
+## Notes for AI
+
+<!-- Add project-specific instructions here -->
 

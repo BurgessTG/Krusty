@@ -550,13 +550,10 @@ impl App {
                         tracing::warn!("Failed to save new plan: {}", e);
                     } else {
                         tracing::info!("Created new plan: '{}'", new_plan.title);
-                        // Show plan confirmation prompt
                         let plan_title = new_plan.title.clone();
                         let task_count = new_plan.total_tasks();
 
-                        self.active_plan = Some(new_plan);
-
-                        // Auto-show sidebar when plan is created
+                        self.set_plan(new_plan);
                         if !self.plan_sidebar.visible {
                             self.plan_sidebar.toggle();
                         }
@@ -752,10 +749,7 @@ impl App {
                     format!("Plan '{}' abandoned. Saved at: {}", title, file_path)
                 };
                 self.chat.messages.push(("system".to_string(), msg));
-
-                self.active_plan = None;
-                self.plan_sidebar.reset();
-
+                self.clear_plan();
                 return true;
             }
         }

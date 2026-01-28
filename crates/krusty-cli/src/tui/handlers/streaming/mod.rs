@@ -253,6 +253,7 @@ impl App {
         let plan_context = self.build_plan_context();
         let skills_context = self.build_skills_context();
         let project_context = self.build_project_context();
+        let insights_context = self.build_insights_context();
 
         if !plan_context.is_empty() {
             tracing::info!(
@@ -319,6 +320,20 @@ impl App {
                     role: Role::System,
                     content: vec![Content::Text {
                         text: skills_context,
+                    }],
+                },
+            );
+            system_insert_count += 1;
+        }
+
+        // Inject insights context
+        if !insights_context.is_empty() {
+            conversation.insert(
+                system_insert_count,
+                ModelMessage {
+                    role: Role::System,
+                    content: vec![Content::Text {
+                        text: insights_context,
                     }],
                 },
             );

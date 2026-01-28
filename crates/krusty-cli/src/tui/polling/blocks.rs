@@ -103,12 +103,12 @@ pub fn poll_build_progress(
 
 /// Poll /init exploration progress and result
 ///
-/// Takes languages directly to avoid callback borrow conflicts.
-/// Caller should call detect_project_languages() before if needed.
+/// Uses cached languages from /init start. Clears cache on completion.
 pub fn poll_init_exploration(
     channels: &mut AsyncChannels,
     explore_blocks: &mut [ExploreBlock],
     init_explore_id: &mut Option<String>,
+    cached_languages: &mut Option<Vec<String>>,
     working_dir: &Path,
     languages: &[String],
 ) -> PollResult {
@@ -157,6 +157,7 @@ pub fn poll_init_exploration(
                     }
                 }
                 *init_explore_id = None;
+                *cached_languages = None; // Clear language cache on completion
 
                 if exploration_result.success {
                     // Generate KRAB.md from exploration results
@@ -237,7 +238,63 @@ pub fn poll_init_exploration(
             }
             Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                 *init_explore_id = None;
+                *cached_languages = None; // Clear language cache on cancellation
                 result = result.with_message("assistant", "Exploration was cancelled.");
+            }
+        }
+    }
+
+    result
+}
+
+/// Poll /init indexing progress and update ExploreBlock
+pub fn poll_indexing_progress(
+    channels: &mut AsyncChannels,
+    explore_blocks: &mut [ExploreBlock],
+    init_explore_id: &Option<String>,
+) -> PollResult {
+    let mut result = PollResult::new();
+
+    let Some(mut rx) = channels.indexing_progress.take() else {
+        return result;
+    };
+
+    loop {
+        match rx.try_recv() {
+            Ok(progress) => {
+                result.needs_redraw = true;
+                // Update the init ExploreBlock with indexing progress
+                if let Some(ref explore_id) = init_explore_id {
+                    for block in explore_blocks.iter_mut() {
+                        if block.tool_use_id() == Some(explore_id.as_str()) {
+                            block.update_indexing_progress(progress.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                channels.indexing_progress = Some(rx);
+                break;
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                tracing::debug!("Indexing progress channel disconnected");
+                // Clear indexing progress when channel closes (indexing complete)
+                if let Some(ref explore_id) = init_explore_id {
+                    for block in explore_blocks.iter_mut() {
+                        if block.tool_use_id() == Some(explore_id.as_str()) {
+                            // Signal completion by clearing the progress
+                            block.update_indexing_progress(krusty_core::index::IndexProgress {
+                                phase: krusty_core::index::IndexPhase::Complete,
+                                current: 0,
+                                total: 0,
+                                current_file: None,
+                            });
+                            break;
+                        }
+                    }
+                }
+                break;
             }
         }
     }

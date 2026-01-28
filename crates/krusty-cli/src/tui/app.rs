@@ -179,6 +179,8 @@ pub struct App {
 
     // /init exploration tracking
     pub init_explore_id: Option<String>,
+    /// Cached languages for /init (set once at start, reused during polling)
+    pub cached_init_languages: Option<Vec<String>>,
 
     // Queued tool calls waiting for explore to complete
     pub queued_tools: Vec<AiToolCall>,
@@ -286,6 +288,7 @@ impl App {
             title_editor: TitleEditor::new(),
             channels,
             init_explore_id: None,
+            cached_init_languages: None,
             queued_tools: Vec::new(),
             pending_tool_results: Vec::new(),
             popups: PopupState::new(),
@@ -357,6 +360,19 @@ impl App {
 
         // Ultimate fallback to default constant
         crate::constants::ai::CONTEXT_WINDOW_TOKENS
+    }
+
+    /// Clear the active plan and sync UI state
+    pub fn clear_plan(&mut self) {
+        self.active_plan = None;
+        self.ui.work_mode = WorkMode::Build;
+        self.plan_sidebar.reset();
+    }
+
+    /// Set the active plan and sync UI state
+    pub fn set_plan(&mut self, plan: PlanFile) {
+        self.active_plan = Some(plan);
+        self.ui.work_mode = WorkMode::Plan;
     }
 
     /// Context usage threshold for auto-pinch (80%)
@@ -785,17 +801,24 @@ impl App {
             }
             self.process_poll_actions(dual_mind_result);
 
+            // Poll /init indexing progress (runs before AI exploration)
+            let indexing_result = crate::tui::polling::poll_indexing_progress(
+                &mut self.channels,
+                &mut self.blocks.explore,
+                &self.init_explore_id,
+            );
+            if indexing_result.needs_redraw {
+                self.needs_redraw = true;
+            }
+
             // Poll /init exploration progress and result
-            // Only detect languages if we have a pending exploration result
-            let languages = if self.channels.init_exploration.is_some() {
-                self.detect_project_languages()
-            } else {
-                Vec::new()
-            };
+            // Clone cached languages to avoid borrow conflict (cleared on completion)
+            let languages = self.cached_init_languages.clone().unwrap_or_default();
             let init_result = poll_init_exploration(
                 &mut self.channels,
                 &mut self.blocks.explore,
                 &mut self.init_explore_id,
+                &mut self.cached_init_languages,
                 &self.working_dir,
                 &languages,
             );

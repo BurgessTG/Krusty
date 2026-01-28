@@ -16,8 +16,7 @@ impl App {
                 self.chat.messages.clear();
                 self.chat.streaming_assistant_idx = None;
                 self.chat.conversation.clear();
-                self.active_plan = None;
-                self.plan_sidebar.reset();
+                self.clear_plan();
                 self.ui.view = View::StartMenu;
             }
             "/load" => {
@@ -244,9 +243,18 @@ impl App {
     }
 
     /// Start async codebase exploration for /init
+    ///
+    /// Flow:
+    /// 1. Create indexing progress channel and start background indexing
+    /// 2. Poll indexing progress and show in UI
+    /// 3. When indexing completes, start AI exploration agents
+    /// 4. Poll exploration progress and show in UI
     fn start_init_exploration(&mut self) {
         use crate::agent::subagent::{SubAgentPool, SubAgentTask};
+        use crate::paths;
         use crate::tui::utils::InitExplorationResult;
+        use krusty_core::index::Indexer;
+        use krusty_core::storage::Database;
         use std::sync::Arc;
 
         let client = match self.create_ai_client() {
@@ -262,24 +270,56 @@ impl App {
 
         let working_dir = self.working_dir.clone();
         let cancellation = self.cancellation.clone();
+        let current_model = self.current_model.clone();
 
-        // Run codebase indexing synchronously before AI exploration
-        // (rusqlite connections are not Send, so this must run on the main thread)
-        if let Some(sm) = &self.services.session_manager {
-            run_codebase_indexing(sm.db().conn(), &working_dir);
-        }
+        // Cache languages once at /init start (used during polling)
+        self.cached_init_languages = Some(self.detect_project_languages());
 
-        // Create result channel
+        // Create indexing progress channel
+        let (indexing_tx, indexing_rx) = tokio::sync::mpsc::unbounded_channel();
+        self.channels.indexing_progress = Some(indexing_rx);
+
+        // Create indexing completion channel (exploration waits on this)
+        let (indexing_done_tx, indexing_done_rx) = tokio::sync::oneshot::channel();
+        // Note: we don't store indexing_done_rx in channels - it's passed to the exploration task
+
+        // Create exploration result channel
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         self.channels.init_exploration = Some(result_rx);
 
-        // Create progress channel for exploration
+        // Create exploration progress channel
         let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
         self.channels.init_progress = Some(progress_rx);
 
-        // Spawn async exploration task for AI analysis
+        // Get database path for spawned thread
+        let db_path = paths::config_dir().join("krusty.db");
+        let indexing_working_dir = working_dir.clone();
+
+        // Spawn indexing in blocking task (opens its own DB connection)
+        tokio::task::spawn_blocking(move || {
+            let result = (|| -> Result<(), String> {
+                let db = Database::new(&db_path).map_err(|e| e.to_string())?;
+                let mut indexer = Indexer::new().map_err(|e| e.to_string())?;
+                indexer
+                    .index_codebase_sync(db.conn(), &indexing_working_dir, Some(indexing_tx))
+                    .map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            let _ = indexing_done_tx.send(result);
+        });
+
+        // Spawn async task that waits for indexing then runs AI exploration
         tokio::spawn(async move {
-            let pool = SubAgentPool::new(client, cancellation).with_concurrency(4);
+            // Wait for indexing to complete before starting AI exploration
+            match indexing_done_rx.await {
+                Ok(Ok(())) => tracing::info!("Codebase indexing complete, starting AI exploration"),
+                Ok(Err(e)) => tracing::warn!("Indexing failed: {}, proceeding with exploration", e),
+                Err(_) => tracing::warn!("Indexing task cancelled, proceeding with exploration"),
+            }
+
+            let pool = SubAgentPool::new(client, cancellation)
+                .with_concurrency(4)
+                .with_override_model(Some(current_model));
 
             // Create exploration tasks with strict output-only prompts
             let tasks = vec![
@@ -334,6 +374,7 @@ impl App {
             let mut key_files = String::new();
             let mut build_system = String::new();
             let mut any_success = false;
+            let mut errors: Vec<String> = Vec::new();
 
             for result in results {
                 if result.success {
@@ -345,8 +386,18 @@ impl App {
                         "build_system" => build_system = result.output,
                         _ => {}
                     }
+                } else if let Some(err) = result.error {
+                    errors.push(format!("{}: {}", result.task_id, err));
                 }
             }
+
+            let error_msg = if any_success {
+                None
+            } else if errors.is_empty() {
+                Some("All exploration agents failed (no details)".to_string())
+            } else {
+                Some(format!("Exploration failed:\n{}", errors.join("\n")))
+            };
 
             let exploration_result = InitExplorationResult {
                 architecture,
@@ -354,11 +405,7 @@ impl App {
                 key_files,
                 build_system,
                 success: any_success,
-                error: if any_success {
-                    None
-                } else {
-                    Some("All exploration agents failed".to_string())
-                },
+                error: error_msg,
             };
 
             let _ = result_tx.send(exploration_result);
@@ -533,8 +580,7 @@ impl App {
                         .as_ref()
                         .map(|p| p.display().to_string())
                         .unwrap_or_default();
-                    self.active_plan = None;
-                    self.plan_sidebar.reset();
+                    self.clear_plan();
                     let msg = if file_path.is_empty() {
                         format!("Plan '{}' abandoned.", title)
                     } else {
@@ -838,44 +884,4 @@ pub fn generate_krab_from_exploration(
     content.push_str("<!-- Add project-specific instructions here -->\n\n");
 
     content
-}
-
-/// Run codebase indexing synchronously
-/// This must run on the main thread as rusqlite connections are not Send
-fn run_codebase_indexing(conn: &rusqlite::Connection, working_dir: &std::path::Path) {
-    use krusty_core::index::{CodebaseStore, Indexer};
-
-    // Create or get codebase entry
-    let codebase_store = CodebaseStore::new(conn);
-    let _codebase = match codebase_store.get_or_create(working_dir) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!("Failed to create codebase entry: {}", e);
-            return;
-        }
-    };
-
-    // Create indexer (without embeddings for speed - can be enabled later)
-    let mut indexer = match Indexer::new() {
-        Ok(i) => i,
-        Err(e) => {
-            tracing::warn!("Failed to create indexer: {}", e);
-            return;
-        }
-    };
-
-    // Run indexing (blocking - no progress channel for sync version)
-    let rt = tokio::runtime::Handle::current();
-    match rt.block_on(indexer.index_codebase(conn, working_dir, None)) {
-        Ok(codebase) => {
-            tracing::info!(
-                codebase_id = %codebase.id,
-                name = %codebase.name,
-                "Codebase indexed successfully"
-            );
-        }
-        Err(e) => {
-            tracing::warn!("Codebase indexing failed: {}", e);
-        }
-    }
 }

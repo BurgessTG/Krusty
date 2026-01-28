@@ -137,22 +137,13 @@ impl ObservationLog {
         Self::default()
     }
 
-    /// Record an observation
+    /// Record an observation, pruning if history exceeds cap
     pub fn record(&mut self, observation: Observation) {
         self.observations.push(observation);
-    }
-
-    /// Get recent observations (last N)
-    #[allow(dead_code)]
-    pub fn recent(&self, n: usize) -> &[Observation] {
-        let start = self.observations.len().saturating_sub(n);
-        &self.observations[start..]
-    }
-
-    /// Get all observations
-    #[allow(dead_code)]
-    pub fn all(&self) -> &[Observation] {
-        &self.observations
+        if self.observations.len() > 100 {
+            let keep_from = self.observations.len() - 80;
+            self.observations.drain(..keep_from);
+        }
     }
 
     /// Get observations since a certain index
@@ -167,21 +158,5 @@ impl ObservationLog {
     /// Current count
     pub fn len(&self) -> usize {
         self.observations.len()
-    }
-
-    /// Check if empty
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.observations.is_empty()
-    }
-
-    /// Format recent observations as context
-    #[allow(dead_code)]
-    pub fn as_context(&self, n: usize) -> String {
-        self.recent(n)
-            .iter()
-            .map(|o| o.as_context_message())
-            .collect::<Vec<_>>()
-            .join("\n\n")
     }
 }
