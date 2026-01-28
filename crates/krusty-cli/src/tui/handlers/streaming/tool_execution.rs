@@ -822,6 +822,12 @@ impl App {
                     });
                 }
 
+                // Clear dialogue depth after each tool so subsequent tools aren't skipped
+                if let Some(ref dm) = dual_mind {
+                    let mut dm_guard = dm.write().await;
+                    dm_guard.take_dialogue();
+                }
+
                 if cancel_token.is_cancelled() {
                     break;
                 }
