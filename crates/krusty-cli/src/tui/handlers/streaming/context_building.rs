@@ -278,7 +278,13 @@ You MUST follow this disciplined workflow. Do NOT batch-complete tasks or skip s
             _ => return String::new(),
         };
 
-        let mut context = String::from("[CODEBASE INSIGHTS]\n\n");
+        // Touch access counts for ranking
+        let ids: Vec<&str> = insights.iter().map(|i| i.id.as_str()).collect();
+        if let Err(e) = insight_store.touch_accessed(&ids) {
+            tracing::debug!("Failed to update insight access counts: {e}");
+        }
+
+        let mut context = String::from("[CODEBASE INSIGHTS]\nThese are accumulated learnings about this codebase. Use them to stay consistent with established patterns.\n\n");
         for insight in &insights {
             context.push_str(&format!(
                 "- [{}] {} (confidence: {:.0}%)\n",
@@ -406,7 +412,7 @@ You MUST follow this disciplined workflow. Do NOT batch-complete tasks or skip s
             "Search: matched symbols"
         );
 
-        let mut context = String::from("[CODEBASE SEARCH RESULTS]\n\n");
+        let mut context = String::from("[CODEBASE SEARCH RESULTS]\nSymbols matching the current query. Reference these locations before searching manually.\n\n");
         for result in &filtered {
             let sig = result
                 .signature

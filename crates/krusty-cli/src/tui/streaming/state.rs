@@ -439,6 +439,33 @@ impl StreamingManager {
         })
     }
 
+    /// Get concatenated thinking block text from current phase
+    ///
+    /// Returns thinking content when in CompleteWithContent or ReadyForTools phase,
+    /// allowing completion detection to check reasoning blocks where models often
+    /// mention task completions.
+    pub fn thinking_text(&self) -> Option<String> {
+        let blocks = match &self.phase {
+            StreamPhase::CompleteWithContent {
+                thinking_blocks, ..
+            } => thinking_blocks,
+            StreamPhase::ReadyForTools {
+                thinking_blocks, ..
+            } => thinking_blocks,
+            _ => return None,
+        };
+        if blocks.is_empty() {
+            return None;
+        }
+        Some(
+            blocks
+                .iter()
+                .map(|b| b.thinking.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
     /// Reset to idle state
     pub fn reset(&mut self) {
         tracing::info!("StreamingManager: resetting to Idle");

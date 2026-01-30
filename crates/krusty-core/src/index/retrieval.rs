@@ -6,6 +6,27 @@ use rusqlite::{params, Connection};
 use super::embeddings::EmbeddingEngine;
 use super::parser::SymbolType;
 
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can", "to",
+    "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "about", "between",
+    "through", "during", "before", "after", "above", "below", "and", "but", "or", "nor", "not",
+    "so", "yet", "both", "either", "neither", "each", "every", "all", "any", "few", "more", "most",
+    "other", "some", "such", "no", "only", "own", "same", "than", "too", "very", "just", "because",
+    "if", "when", "where", "how", "what", "which", "who", "whom", "this", "that", "these", "those",
+    "i", "me", "my", "we", "our", "you", "your", "he", "him", "his", "she", "her", "it", "its",
+    "they", "them", "their",
+];
+
+fn extract_search_words(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .filter(|w| w.len() >= 2 && !STOP_WORDS.contains(&w.as_str()))
+        .collect()
+}
+
 /// A search query
 #[derive(Debug, Clone, Default)]
 pub struct SearchQuery {
@@ -230,8 +251,15 @@ impl<'a> SemanticRetrieval<'a> {
         Ok(candidates)
     }
 
-    /// Simple keyword search
+    /// Keyword search with per-word OR matching and relevance ranking
     fn keyword_search(&self, codebase_id: &str, query: &SearchQuery) -> Result<Vec<SearchResult>> {
+        let words = query
+            .text
+            .as_ref()
+            .map(|t| extract_search_words(t))
+            .unwrap_or_default();
+
+        // Build SQL with per-word OR clauses for better matching
         let mut sql = String::from(
             "SELECT id, symbol_type, symbol_name, symbol_path, file_path,
                     line_start, line_end, signature
@@ -240,11 +268,23 @@ impl<'a> SemanticRetrieval<'a> {
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(codebase_id.to_string())];
 
-        if let Some(text) = &query.text {
-            sql.push_str(" AND (symbol_name LIKE ? OR symbol_path LIKE ?)");
-            let pattern = format!("%{}%", text);
-            params_vec.push(Box::new(pattern.clone()));
-            params_vec.push(Box::new(pattern));
+        if !words.is_empty() {
+            let word_clauses: Vec<String> = words
+                .iter()
+                .map(|_| {
+                    let idx = params_vec.len() + 1;
+                    let clause = format!("(symbol_name LIKE ?{idx} OR symbol_path LIKE ?{idx})");
+                    clause
+                })
+                .collect();
+
+            // Collect patterns after building clauses to avoid double borrow
+            let patterns: Vec<String> = words.iter().map(|w| format!("%{w}%")).collect();
+            for pattern in patterns {
+                params_vec.push(Box::new(pattern));
+            }
+
+            sql.push_str(&format!(" AND ({})", word_clauses.join(" OR ")));
         }
 
         if let Some(st) = &query.symbol_type {
@@ -254,10 +294,16 @@ impl<'a> SemanticRetrieval<'a> {
 
         if let Some(pattern) = &query.file_pattern {
             sql.push_str(" AND file_path LIKE ?");
-            params_vec.push(Box::new(format!("%{}%", pattern)));
+            params_vec.push(Box::new(format!("%{pattern}%")));
         }
 
-        sql.push_str(&format!(" ORDER BY symbol_name LIMIT {}", query.limit));
+        // Fetch more than limit to allow re-ranking
+        let fetch_limit = if words.len() > 1 {
+            query.limit * 5
+        } else {
+            query.limit
+        };
+        sql.push_str(&format!(" LIMIT {fetch_limit}"));
 
         let mut stmt = self.conn.prepare(&sql)?;
         let params_refs: Vec<&dyn rusqlite::ToSql> =
@@ -300,6 +346,19 @@ impl<'a> SemanticRetrieval<'a> {
 
             let symbol_type = SymbolType::parse(&symbol_type_str).unwrap_or(SymbolType::Function);
 
+            // Score by how many query words match
+            let score = if words.is_empty() {
+                1.0
+            } else {
+                let name_lower = symbol_name.to_lowercase();
+                let path_lower = symbol_path.to_lowercase();
+                let matches = words
+                    .iter()
+                    .filter(|w| name_lower.contains(w.as_str()) || path_lower.contains(w.as_str()))
+                    .count();
+                matches as f32 / words.len() as f32
+            };
+
             results.push(SearchResult {
                 id,
                 symbol_type,
@@ -309,9 +368,18 @@ impl<'a> SemanticRetrieval<'a> {
                 line_start: line_start as usize,
                 line_end: line_end as usize,
                 signature,
-                score: 1.0, // Keyword match gets full score
+                score,
             });
         }
+
+        // Sort by match count descending, then by name
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.symbol_name.cmp(&b.symbol_name))
+        });
+        results.truncate(query.limit);
 
         Ok(results)
     }

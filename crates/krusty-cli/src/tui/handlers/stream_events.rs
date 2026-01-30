@@ -443,22 +443,33 @@ impl App {
         }
 
         // Check for task completion mentions (works in both modes if plan is active)
-        if self.active_plan.is_some() && !final_text.is_empty() {
-            tracing::info!(
-                "Plan active, checking final_text ({} chars) for completions",
-                final_text.len()
-            );
-            // Log a preview of the text for debugging
-            let preview: String = final_text.chars().take(200).collect();
-            tracing::debug!("Final text preview: {}...", preview);
-
-            // Check for plan abandonment first
-            if self.try_detect_plan_abandonment(&final_text) {
-                // Plan was abandoned, skip completion check
-            } else {
-                self.try_update_task_completions(&final_text);
+        // Include thinking block content since models often mention completions there
+        if self.active_plan.is_some() {
+            let mut check_text = final_text.clone();
+            if let Some(thinking_text) = self.streaming.thinking_text() {
+                tracing::debug!(
+                    "Appending {} chars of thinking content for completion check",
+                    thinking_text.len()
+                );
+                check_text.push('\n');
+                check_text.push_str(&thinking_text);
             }
-        } else if self.active_plan.is_none() {
+
+            if !check_text.is_empty() {
+                tracing::info!(
+                    "Plan active, checking {} chars (text + thinking) for completions",
+                    check_text.len()
+                );
+                let preview: String = check_text.chars().take(200).collect();
+                tracing::debug!("Check text preview: {}...", preview);
+
+                if self.try_detect_plan_abandonment(&check_text) {
+                    // Plan was abandoned, skip completion check
+                } else {
+                    self.try_update_task_completions(&check_text);
+                }
+            }
+        } else {
             tracing::debug!("No active plan, skipping task completion check");
         }
 

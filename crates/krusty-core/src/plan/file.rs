@@ -82,8 +82,19 @@ static RE_IMPLEMENTED: Lazy<Regex> =
 static RE_CHECKMARK_AFTER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)(?:Task\s*)?(\d+\.\d+)\s*[✓✅]").unwrap());
 
+/// Pattern 10: "Task X.Y: ... DONE" — task ID followed by any text, then DONE/done at end of line
+static RE_TASK_TRAILING_DONE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?im)(?:Task\s*)?(\d+\.\d+)[:\s].*?\b(?:DONE|done|COMPLETE|complete)\s*$").unwrap()
+});
+
+/// Pattern 11: "Task X.Y: ... — DONE" — task ID with em-dash/en-dash/hyphen before status
+static RE_TASK_DASH_STATUS: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?im)(?:Task\s*)?(\d+\.\d+)[:\s].*?[—–-]\s*(?:DONE|done|complete|completed)\s*$")
+        .unwrap()
+});
+
 /// All task completion patterns for efficient iteration
-static TASK_COMPLETION_PATTERNS: Lazy<[&'static Lazy<Regex>; 9]> = Lazy::new(|| {
+static TASK_COMPLETION_PATTERNS: Lazy<[&'static Lazy<Regex>; 11]> = Lazy::new(|| {
     [
         &RE_CHECKBOX,
         &RE_TASK_FIRST,
@@ -94,6 +105,8 @@ static TASK_COMPLETION_PATTERNS: Lazy<[&'static Lazy<Regex>; 9]> = Lazy::new(|| 
         &RE_THAT_COMPLETES,
         &RE_IMPLEMENTED,
         &RE_CHECKMARK_AFTER,
+        &RE_TASK_TRAILING_DONE,
+        &RE_TASK_DASH_STATUS,
     ]
 });
 

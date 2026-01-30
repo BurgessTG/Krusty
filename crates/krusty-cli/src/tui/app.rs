@@ -231,6 +231,10 @@ pub struct App {
     // Toast notification queue
     pub toasts: crate::tui::components::ToastQueue,
 
+    // Semantic retrieval embedding engine (lazy-initialized)
+    pub embedding_engine: Option<krusty_core::index::EmbeddingEngine>,
+    pub embedding_init_failed: bool,
+
     // Auto-updater state
     pub update_status: Option<krusty_core::updater::UpdateStatus>,
     /// Path to the krusty repo (for self-update)
@@ -329,6 +333,10 @@ impl App {
 
             // Toast notifications
             toasts: crate::tui::components::ToastQueue::new(),
+
+            // Semantic retrieval
+            embedding_engine: None,
+            embedding_init_failed: false,
 
             // Auto-updater
             update_status: None,

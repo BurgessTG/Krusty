@@ -153,15 +153,13 @@ pub fn has_file_references(text: &str) -> bool {
     if RAW_PATH_PATTERN.is_match(text) {
         return true;
     }
-    BRACKET_PATTERN
-        .captures_iter(text)
-        .any(|cap| {
-            let inner = cap.get(1).unwrap().as_str().trim();
-            inner.starts_with("http://")
-                || inner.starts_with("https://")
-                || inner.starts_with("clipboard:")
-                || has_supported_extension(inner)
-        })
+    BRACKET_PATTERN.captures_iter(text).any(|cap| {
+        let inner = cap.get(1).unwrap().as_str().trim();
+        inner.starts_with("http://")
+            || inner.starts_with("https://")
+            || inner.starts_with("clipboard:")
+            || has_supported_extension(inner)
+    })
 }
 
 /// Backwards compat alias

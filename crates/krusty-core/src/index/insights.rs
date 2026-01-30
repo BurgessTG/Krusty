@@ -193,7 +193,7 @@ impl<'a> InsightStore<'a> {
             let existing_normalized = normalize_content(&existing);
 
             // Check for significant overlap using Jaccard similarity
-            if jaccard_similarity(&normalized, &existing_normalized) > 0.7 {
+            if jaccard_similarity(&normalized, &existing_normalized) > 0.5 {
                 return Ok(true);
             }
         }
@@ -272,6 +272,28 @@ impl<'a> InsightStore<'a> {
         }
 
         Ok(insights)
+    }
+
+    /// Increment access_count for insights that were used in context
+    pub fn touch_accessed(&self, ids: &[&str]) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "UPDATE codebase_insights SET access_count = access_count + 1,
+             last_accessed_at = ?1 WHERE id = ?2",
+        )?;
+        let now = Utc::now().to_rfc3339();
+        for id in ids {
+            stmt.execute(params![now, id])?;
+        }
+        Ok(())
+    }
+
+    /// Delete insights at or above a confidence threshold for a codebase
+    pub fn delete_by_confidence_above(&self, codebase_id: &str, threshold: f64) -> Result<usize> {
+        let count = self.conn.execute(
+            "DELETE FROM codebase_insights WHERE codebase_id = ?1 AND confidence >= ?2",
+            params![codebase_id, threshold],
+        )?;
+        Ok(count)
     }
 }
 

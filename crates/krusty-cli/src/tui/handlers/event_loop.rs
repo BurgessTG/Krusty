@@ -8,9 +8,9 @@ use crate::tui::polling::{
     PollResult,
 };
 
-/// Split exploration text into individual insight paragraphs
+/// Split exploration text into individual insight paragraphs.
+/// Keeps bullet groups together as single insights — only splits on paragraph boundaries.
 fn split_into_insights(text: &str) -> Vec<String> {
-    // Strip markdown headers before splitting — they're structural, not content
     let cleaned: String = text
         .lines()
         .filter(|line| {
@@ -22,27 +22,13 @@ fn split_into_insights(text: &str) -> Vec<String> {
 
     let mut insights = Vec::new();
 
-    // Split by double newlines (paragraphs) first, then by bullet points
     for section in cleaned.split("\n\n") {
         let trimmed = section.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        // If section contains bullet points, split them
-        if trimmed.contains("\n- ") || trimmed.starts_with("- ") {
-            for bullet in trimmed.split("\n- ") {
-                let bullet = bullet.trim().trim_start_matches("- ").trim();
-                if bullet.len() >= 30 {
-                    insights.push(bullet.to_string());
-                }
-            }
-        } else if trimmed.len() >= 30 {
+        if trimmed.len() >= 30 {
             insights.push(trimmed.to_string());
         }
     }
 
-    // Cap per section to avoid noise
     insights.truncate(10);
     insights
 }
@@ -200,6 +186,21 @@ impl App {
             };
 
         let insight_store = krusty_core::index::InsightStore::new(conn);
+
+        // Clear previous /init insights (keeps dual-mind insights at confidence 0.6)
+        match insight_store.delete_by_confidence_above(&codebase.id, 0.75) {
+            Ok(deleted) if deleted > 0 => {
+                tracing::info!(
+                    count = deleted,
+                    "Purged stale /init insights before re-indexing"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to purge stale /init insights");
+            }
+            _ => {}
+        }
+
         let session_id = self.current_session_id.as_deref();
         let mut stored = 0;
 
