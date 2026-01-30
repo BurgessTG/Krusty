@@ -20,7 +20,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           # Linux ARM64 (native runner — cross toolchain too old for ort_sys)
-          - target: aarch64-unknown-linux-gnu
+          - target: blacksmith-4vcpu-ubuntu-2404-arm
             os: ubuntu-24.04-arm
           # macOS Intel
           - target: x86_64-apple-darwin
@@ -68,7 +68,7 @@ jobs:
   release:
     name: Create Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
