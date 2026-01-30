@@ -34,6 +34,24 @@ fn check_file_limit(count: usize) -> anyhow::Result<()> {
 }
 
 impl App {
+    /// Lazily initialize the embedding engine (one-shot, never retries on failure)
+    fn ensure_embedding_engine(&mut self) {
+        if self.embedding_engine.is_some() || self.embedding_init_failed {
+            return;
+        }
+
+        match krusty_core::index::EmbeddingEngine::new() {
+            Ok(engine) => {
+                tracing::info!("Embedding engine initialized for semantic search");
+                self.embedding_engine = Some(engine);
+            }
+            Err(e) => {
+                tracing::debug!("Embedding engine init failed (keyword fallback): {e}");
+                self.embedding_init_failed = true;
+            }
+        }
+    }
+
     /// Handle user input submission (message or command)
     pub fn handle_input_submit(&mut self, text: String) {
         // Check if this is a slash command vs a file path
@@ -248,30 +266,45 @@ impl App {
             message_count: self.chat.conversation.len(),
         });
 
+        // Lazy-init embedding engine for semantic search
+        self.ensure_embedding_engine();
+
         // Build context
         let diagnostics_context = self.build_diagnostics_context();
         let plan_context = self.build_plan_context();
         let skills_context = self.build_skills_context();
         let project_context = self.build_project_context();
         let insights_context = self.build_insights_context();
+        let search_context = self.build_search_context();
 
+        // Log all context injection for monitoring
         if !plan_context.is_empty() {
-            tracing::info!(
-                "Injecting plan context ({} chars) into conversation",
-                plan_context.len()
-            );
+            tracing::info!(chars = plan_context.len(), "Context: plan");
         }
         if !skills_context.is_empty() {
-            tracing::debug!(
-                "Injecting skills context ({} chars) into conversation",
-                skills_context.len()
-            );
+            tracing::info!(chars = skills_context.len(), "Context: skills");
         }
         if !project_context.is_empty() {
+            tracing::info!(chars = project_context.len(), "Context: project");
+        }
+        if !insights_context.is_empty() {
+            let insight_count = insights_context.matches("\n- [").count();
             tracing::info!(
-                "Injecting project context ({} chars) into conversation",
-                project_context.len()
+                chars = insights_context.len(),
+                insights = insight_count,
+                "Context: insights"
             );
+        }
+        if !search_context.is_empty() {
+            let result_count = search_context.matches("\n- [").count();
+            tracing::info!(
+                chars = search_context.len(),
+                results = result_count,
+                "Context: search"
+            );
+        }
+        if !diagnostics_context.is_empty() {
+            tracing::info!(chars = diagnostics_context.len(), "Context: diagnostics");
         }
 
         let has_thinking_conversation = self.thinking_enabled
@@ -334,6 +367,20 @@ impl App {
                     role: Role::System,
                     content: vec![Content::Text {
                         text: insights_context,
+                    }],
+                },
+            );
+            system_insert_count += 1;
+        }
+
+        // Inject search context (semantic/keyword codebase search results)
+        if !search_context.is_empty() {
+            conversation.insert(
+                system_insert_count,
+                ModelMessage {
+                    role: Role::System,
+                    content: vec![Content::Text {
+                        text: search_context,
                     }],
                 },
             );
