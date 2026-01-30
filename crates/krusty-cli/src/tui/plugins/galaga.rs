@@ -757,15 +757,21 @@ impl GalagaPlugin {
             let x = star.x as usize;
             let y = star.y as usize;
             let star_size = star.size as usize;
-            if x < width && y < height {
+            if x < width && y < height && star_size > 0 {
                 let alpha = star.brightness;
                 // Draw star with size
                 for dy in 0..star_size {
+                    let sy = y.saturating_add(dy);
+                    if sy >= height {
+                        continue;
+                    }
                     for dx in 0..star_size {
                         let sx = x.saturating_add(dx);
-                        let sy = y.saturating_add(dy);
-                        if sx < width && sy < height {
-                            let offset = (sy * width + sx) * 4;
+                        if sx >= width {
+                            continue;
+                        }
+                        let offset = (sy * width + sx) * 4;
+                        if offset + 3 < self.scratch_buffer.len() {
                             self.scratch_buffer[offset] = alpha;
                             self.scratch_buffer[offset + 1] = alpha;
                             self.scratch_buffer[offset + 2] = alpha + 20;
@@ -796,10 +802,12 @@ impl GalagaPlugin {
             for y in ey.saturating_sub(eh / 2)..(ey + eh / 2).min(height) {
                 for x in ex.saturating_sub(ew / 2)..(ex + ew / 2).min(width) {
                     let offset = (y * width + x) * 4;
-                    self.scratch_buffer[offset] = r;
-                    self.scratch_buffer[offset + 1] = g;
-                    self.scratch_buffer[offset + 2] = b;
-                    self.scratch_buffer[offset + 3] = 255;
+                    if offset + 3 < self.scratch_buffer.len() {
+                        self.scratch_buffer[offset] = r;
+                        self.scratch_buffer[offset + 1] = g;
+                        self.scratch_buffer[offset + 2] = b;
+                        self.scratch_buffer[offset + 3] = 255;
+                    }
                 }
             }
         }
@@ -832,10 +840,12 @@ impl GalagaPlugin {
 
                     if rel_x.abs() < max_width_at_y / 2.0 {
                         let offset = (y * width + x) * 4;
-                        self.scratch_buffer[offset] = sr;
-                        self.scratch_buffer[offset + 1] = sg;
-                        self.scratch_buffer[offset + 2] = sb;
-                        self.scratch_buffer[offset + 3] = 255;
+                        if offset + 3 < self.scratch_buffer.len() {
+                            self.scratch_buffer[offset] = sr;
+                            self.scratch_buffer[offset + 1] = sg;
+                            self.scratch_buffer[offset + 2] = sb;
+                            self.scratch_buffer[offset + 3] = 255;
+                        }
                     }
                 }
             }
@@ -854,10 +864,12 @@ impl GalagaPlugin {
             for y in engine_y_start..engine_y_end.min(height) {
                 for x in engine_x_start..engine_x_end.min(width) {
                     let offset = (y * width + x) * 4;
-                    self.scratch_buffer[offset] = gr;
-                    self.scratch_buffer[offset + 1] = gg;
-                    self.scratch_buffer[offset + 2] = gb;
-                    self.scratch_buffer[offset + 3] = 255;
+                    if offset + 3 < self.scratch_buffer.len() {
+                        self.scratch_buffer[offset] = gr;
+                        self.scratch_buffer[offset + 1] = gg;
+                        self.scratch_buffer[offset + 2] = gb;
+                        self.scratch_buffer[offset + 3] = 255;
+                    }
                 }
             }
         }
@@ -878,10 +890,12 @@ impl GalagaPlugin {
                     ..(bx + BULLET_WIDTH as usize).min(width)
                 {
                     let offset = (y * width + x) * 4;
-                    self.scratch_buffer[offset] = 255; // R
-                    self.scratch_buffer[offset + 1] = 255; // G
-                    self.scratch_buffer[offset + 2] = 100; // B
-                    self.scratch_buffer[offset + 3] = 255; // A
+                    if offset + 3 < self.scratch_buffer.len() {
+                        self.scratch_buffer[offset] = 255; // R
+                        self.scratch_buffer[offset + 1] = 255; // G
+                        self.scratch_buffer[offset + 2] = 100; // B
+                        self.scratch_buffer[offset + 3] = 255; // A
+                    }
                 }
             }
         }
@@ -902,10 +916,12 @@ impl GalagaPlugin {
                     ..(bx + BULLET_WIDTH as usize).min(width)
                 {
                     let offset = (y * width + x) * 4;
-                    self.scratch_buffer[offset] = 255; // R
-                    self.scratch_buffer[offset + 1] = 100; // G
-                    self.scratch_buffer[offset + 2] = 100; // B
-                    self.scratch_buffer[offset + 3] = 255; // A
+                    if offset + 3 < self.scratch_buffer.len() {
+                        self.scratch_buffer[offset] = 255; // R
+                        self.scratch_buffer[offset + 1] = 100; // G
+                        self.scratch_buffer[offset + 2] = 100; // B
+                        self.scratch_buffer[offset + 3] = 255; // A
+                    }
                 }
             }
         }
@@ -925,10 +941,12 @@ impl GalagaPlugin {
             for y in py.saturating_sub(psize / 2)..(py + psize / 2).min(height) {
                 for x in px.saturating_sub(psize / 2)..(px + psize / 2).min(width) {
                     let offset = (y * width + x) * 4;
-                    self.scratch_buffer[offset] = r;
-                    self.scratch_buffer[offset + 1] = g;
-                    self.scratch_buffer[offset + 2] = b;
-                    self.scratch_buffer[offset + 3] = alpha;
+                    if offset + 3 < self.scratch_buffer.len() {
+                        self.scratch_buffer[offset] = r;
+                        self.scratch_buffer[offset + 1] = g;
+                        self.scratch_buffer[offset + 2] = b;
+                        self.scratch_buffer[offset + 3] = alpha;
+                    }
                 }
             }
         }

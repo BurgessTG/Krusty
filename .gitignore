@@ -6,6 +6,7 @@ CLAUDE.md
 
 # Build outputs
 target/
+.fastembed_cache/
 
 # MCP server overrides (user preferences)
 # This file stores which MCP servers are enabled/disabled per project
